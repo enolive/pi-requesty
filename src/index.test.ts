@@ -583,35 +583,35 @@ describe('formatUsageStatus', () => {
     const { formatUsageStatus } = await loadExtension()
     const info: ApiKeyInfo = { name: 'Playground', monthlySpend: 63.545944565, monthlyLimit: 150 }
 
-    expect(formatUsageStatus(info)).toBe('Requesty Usage (Playground): $63.55/$150.00 (42%)')
+    expect(formatUsageStatus(info)).toBe('Playground: $63.55/$150.00 (42%)')
   })
 
   it('formats unlimited when limit is 0', async () => {
     const { formatUsageStatus } = await loadExtension()
     const info: ApiKeyInfo = { name: 'Unlimited', monthlySpend: 12.34, monthlyLimit: 0 }
 
-    expect(formatUsageStatus(info)).toBe('Requesty Usage (Unlimited): $12.34 (unlimited)')
+    expect(formatUsageStatus(info)).toBe('Unlimited: $12.34 (unlimited)')
   })
 
   it('rounds spend to two decimals', async () => {
     const { formatUsageStatus } = await loadExtension()
     const info: ApiKeyInfo = { name: 'Playground', monthlySpend: 1.006, monthlyLimit: 100 }
 
-    expect(formatUsageStatus(info)).toBe('Requesty Usage (Playground): $1.01/$100.00 (1%)')
+    expect(formatUsageStatus(info)).toBe('Playground: $1.01/$100.00 (1%)')
   })
 
   it('preserves names with spaces and special characters', async () => {
     const { formatUsageStatus } = await loadExtension()
     const info: ApiKeyInfo = { name: 'My Team "Key"!', monthlySpend: 50, monthlyLimit: 200 }
 
-    expect(formatUsageStatus(info)).toBe('Requesty Usage (My Team "Key"!): $50.00/$200.00 (25%)')
+    expect(formatUsageStatus(info)).toBe('My Team "Key"!: $50.00/$200.00 (25%)')
   })
 
   it('shows 0% when nothing is spent', async () => {
     const { formatUsageStatus } = await loadExtension()
     const info: ApiKeyInfo = { name: 'Playground', monthlySpend: 0, monthlyLimit: 150 }
 
-    expect(formatUsageStatus(info)).toBe('Requesty Usage (Playground): $0.00/$150.00 (0%)')
+    expect(formatUsageStatus(info)).toBe('Playground: $0.00/$150.00 (0%)')
   })
 })
 
@@ -641,7 +641,7 @@ describe('usage status', () => {
 
       await fireEvent(eventHandlers, eventName, ctx)
 
-      expect(capturedStatusLines).toEqual([{ key: USAGE_STATUS_KEY, text: containing('Requesty Usage (Playground)') }])
+      expect(capturedStatusLines).toEqual([{ key: USAGE_STATUS_KEY, text: containing('Playground:') }])
     })
   })
 
@@ -676,7 +676,7 @@ describe('usage status', () => {
       first.resolve(firstInfo) // older resolves after, must be suppressed
       await flushMicrotasks()
 
-      const expected = [{ key: USAGE_STATUS_KEY, text: containing('Requesty Usage (Fast)') }]
+      const expected = [{ key: USAGE_STATUS_KEY, text: containing('Fast:') }]
       expect(capturedStatusLines).toEqual(expected)
     })
 
@@ -690,7 +690,7 @@ describe('usage status', () => {
       await fireEvent(eventHandlers, 'turn_end', ctx)
       await fireEvent(eventHandlers, 'turn_end', ctx)
 
-      const expected = { key: USAGE_STATUS_KEY, text: containing('Requesty Usage (First)') }
+      const expected = { key: USAGE_STATUS_KEY, text: containing('First:') }
       expect(capturedStatusLines.at(-1)).toEqual(expected)
     })
 
@@ -706,7 +706,7 @@ describe('usage status', () => {
       timers.advanceTimersByTime(2000)
       await fireEvent(eventHandlers, 'turn_end', ctx)
 
-      const expected = { key: USAGE_STATUS_KEY, text: containing('Requesty Usage (Second)') }
+      const expected = { key: USAGE_STATUS_KEY, text: containing('Second:') }
       expect(capturedStatusLines.at(-1)).toEqual(expected)
     })
 
@@ -725,7 +725,7 @@ describe('usage status', () => {
       first.reject(new Error('HTTP 500 boom'))
       await flushMicrotasks()
 
-      const expected = [{ key: USAGE_STATUS_KEY, text: containing('Requesty Usage (Fast)') }]
+      const expected = [{ key: USAGE_STATUS_KEY, text: containing('Fast:') }]
       expect(capturedStatusLines).toEqual(expected)
     })
 
