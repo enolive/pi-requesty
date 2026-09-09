@@ -18,6 +18,7 @@ import {
   type Confirmer,
   type DiscoveryEvaluation,
   type Notifier,
+  type Refresher,
   type StatusReporter,
 } from './discovery'
 
@@ -295,8 +296,9 @@ describe('finalizeDiscovery', () => {
     const { updateModelsJson } = configureMockedDependencies()
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
+    const refresher = createRefresher()
 
-    await finalizeDiscovery(createEvaluation({ dryRun: true }), createEnv(), confirmer, notifier)
+    await finalizeDiscovery(createEvaluation({ dryRun: true }), createEnv(), confirmer, notifier, refresher)
 
     expect(updateModelsJson).not.toHaveBeenCalled()
     expect(confirmer.confirmations).toEqual([])
@@ -307,8 +309,9 @@ describe('finalizeDiscovery', () => {
     const { updateModelsJson } = configureMockedDependencies()
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
+    const refresher = createRefresher()
 
-    await finalizeDiscovery(createEvaluation({ passing: [] }), createEnv(), confirmer, notifier)
+    await finalizeDiscovery(createEvaluation({ passing: [] }), createEnv(), confirmer, notifier, refresher)
 
     expect(confirmer.confirmations).toEqual([])
     expect(updateModelsJson).not.toHaveBeenCalled()
@@ -319,15 +322,33 @@ describe('finalizeDiscovery', () => {
     const { updateModelsJson } = configureMockedDependencies()
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
+    const refresher = createRefresher()
     const evaluation = createEvaluation()
 
-    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier)
+    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier, refresher)
 
     expect(confirmer.confirmations).toHaveLength(1)
     expect(updateModelsJson).toHaveBeenCalledWith(evaluation.data, evaluation.passing, expect.any(Object))
+    expect(refresher.refreshes).toBe(1)
     expect(notifier.notifications.at(-1)).toEqual({
-      message: 'Updated models.json. Run /reload to use the changes.',
+      message: 'Updated models.json. New models are available in /model.',
       level: 'info',
+    })
+  })
+
+  it('notifies a warning when refreshing the registry fails after a successful write', async () => {
+    const { updateModelsJson } = configureMockedDependencies()
+    const notifier = createNotifier()
+    const confirmer = createConfirmer(true)
+    const refresher = createRefresher(new Error('registry exploded'))
+
+    await finalizeDiscovery(createEvaluation(), createEnv(), confirmer, notifier, refresher)
+
+    expect(updateModelsJson).toHaveBeenCalled()
+    expect(notifier.notifications.at(-1)).toEqual({
+      message:
+        'Updated models.json, but the model registry could not be refreshed: registry exploded. Run /reload or restart Pi to use the changes.',
+      level: 'warning',
     })
   })
 
@@ -335,21 +356,43 @@ describe('finalizeDiscovery', () => {
     const { updateModelsJson } = configureMockedDependencies()
     const notifier = createNotifier()
     const confirmer = createConfirmer(false)
+    const refresher = createRefresher()
 
-    await finalizeDiscovery(createEvaluation(), createEnv(), confirmer, notifier)
+    await finalizeDiscovery(createEvaluation(), createEnv(), confirmer, notifier, refresher)
 
     expect(updateModelsJson).not.toHaveBeenCalled()
+    expect(refresher.refreshes).toBe(0)
     expect(notifier.notifications.at(-1)).toEqual({
       message: 'Left models.json unchanged.',
       level: 'info',
     })
   })
 
+  it('does not refresh the registry on dry-run or no-passing-models exits', async () => {
+    const { updateModelsJson } = configureMockedDependencies()
+    const notifier = createNotifier()
+    const confirmer = createConfirmer(true)
+    const refresher = createRefresher()
+
+    await finalizeDiscovery(createEvaluation({ dryRun: true }), createEnv(), confirmer, notifier, refresher)
+    await finalizeDiscovery(createEvaluation({ passing: [] }), createEnv(), confirmer, notifier, refresher)
+
+    expect(updateModelsJson).not.toHaveBeenCalled()
+    expect(refresher.refreshes).toBe(0)
+  })
+
   it('still confirms when the model id diff is empty, asking to refresh', async () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
+    const refresher = createRefresher()
 
-    await finalizeDiscovery(createEvaluation({ diff: { added: [], removed: [] } }), createEnv(), confirmer, notifier)
+    await finalizeDiscovery(
+      createEvaluation({ diff: { added: [], removed: [] } }),
+      createEnv(),
+      confirmer,
+      notifier,
+      refresher,
+    )
 
     expect(confirmer.confirmations).toEqual([
       {
@@ -362,9 +405,10 @@ describe('finalizeDiscovery', () => {
   it('asks to write when the model id diff has changes', async () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
+    const refresher = createRefresher()
     const evaluation = createEvaluation({ diff: { added: ['requesty/model-new'], removed: [] } })
 
-    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier)
+    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier, refresher)
 
     expect(confirmer.confirmations).toEqual([
       {
@@ -377,8 +421,15 @@ describe('finalizeDiscovery', () => {
   it('notifies info when no models failed', async () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
+    const refresher = createRefresher()
 
-    await finalizeDiscovery(createEvaluation({ failedCount: 0, modelCount: 2 }), createEnv(), confirmer, notifier)
+    await finalizeDiscovery(
+      createEvaluation({ failedCount: 0, modelCount: 2 }),
+      createEnv(),
+      confirmer,
+      notifier,
+      refresher,
+    )
 
     expect(notifier.notifications[0]?.level).toBe('info')
   })
@@ -386,8 +437,15 @@ describe('finalizeDiscovery', () => {
   it('notifies warning on partial failures', async () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
+    const refresher = createRefresher()
 
-    await finalizeDiscovery(createEvaluation({ failedCount: 1, modelCount: 2 }), createEnv(), confirmer, notifier)
+    await finalizeDiscovery(
+      createEvaluation({ failedCount: 1, modelCount: 2 }),
+      createEnv(),
+      confirmer,
+      notifier,
+      refresher,
+    )
 
     expect(notifier.notifications[0]?.level).toBe('warning')
   })
@@ -395,12 +453,14 @@ describe('finalizeDiscovery', () => {
   it('notifies error when all models failed', async () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
+    const refresher = createRefresher()
 
     await finalizeDiscovery(
       createEvaluation({ failedCount: 2, modelCount: 2, passing: [] }),
       createEnv(),
       confirmer,
       notifier,
+      refresher,
     )
 
     expect(notifier.notifications[0]?.level).toBe('error')
@@ -409,13 +469,14 @@ describe('finalizeDiscovery', () => {
   it('includes health check summary and log note in the summary', async () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
+    const refresher = createRefresher()
     const evaluation = createEvaluation({
       healthCheckSummary: 'Health check summary.\n',
       logNote: `Full health check log: ${HEALTH_CHECK_LOG_PATH}\n`,
       diff: { added: ['requesty/model-a'], removed: [] },
     })
 
-    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier)
+    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier, refresher)
 
     expect(notifier.notifications[0]?.message).toEqual(
       [
@@ -494,6 +555,17 @@ function createConfirmer(result: boolean): Confirmer & { confirmations: Array<{ 
       return Promise.resolve(result)
     },
   }
+}
+
+function createRefresher(error?: Error): Refresher & { refreshes: number } {
+  const refresher = {
+    refreshes: 0,
+    refresh: () => {
+      refresher.refreshes++
+      return error ? Promise.reject(error) : Promise.resolve()
+    },
+  }
+  return refresher
 }
 
 /** Configure mocked domain deps for evaluateDiscovery/finalizeDiscovery. */

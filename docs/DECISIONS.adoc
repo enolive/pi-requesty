@@ -50,3 +50,4 @@ The provider-like parts (API model fetch, usage footer, wanting Pi-managed auth)
 real, but the health check and the snapshot model break the provider fit.
 
 Decision: stay a `/requesty-discover` command that writes `models.json`.
+

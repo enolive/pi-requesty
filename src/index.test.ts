@@ -84,6 +84,7 @@ describe('extension registration', () => {
       mockedEnv.value,
       expect.any(Object),
       expect.any(Object),
+      expect.any(Object),
     )
   })
 })
@@ -251,6 +252,44 @@ describe('ui adapter factories', () => {
     createConsoleStatusReporter().set('Discovering Requesty models...')
 
     expect(consoleSpy).toHaveBeenCalledWith('Discovering Requesty models...')
+  })
+
+  it('createUiRefresher delegates to ctx.modelRegistry.refresh and resolves on success', async () => {
+    mockEnv()
+    const { createUiRefresher } = await loadExtension()
+    const { ctx, capturedModelRefreshes } = createFakeCommandContext()
+
+    await expect(createUiRefresher(ctx).refresh()).resolves.toBeUndefined()
+
+    expect(capturedModelRefreshes).toEqual([{ allowNetwork: false }])
+  })
+
+  it('createUiRefresher rejects on provider errors inside the refresh result', async () => {
+    mockEnv()
+    const { createUiRefresher } = await loadExtension()
+    const refreshResult = {
+      aborted: false,
+      errors: new Map([['requesty-export', new Error('no key')]]),
+    }
+    const { ctx } = createFakeCommandContext({ refreshResult })
+
+    await expect(createUiRefresher(ctx).refresh()).rejects.toThrow('requesty-export: no key')
+  })
+
+  it('createUiRefresher rejects on an aborted refresh even without provider errors', async () => {
+    mockEnv()
+    const { createUiRefresher } = await loadExtension()
+    const refreshResult = { aborted: true, errors: new Map() }
+    const { ctx } = createFakeCommandContext({ refreshResult })
+
+    await expect(createUiRefresher(ctx).refresh()).rejects.toThrow('refresh aborted')
+  })
+
+  it('createNoopRefresher resolves without touching anything', async () => {
+    mockEnv()
+    const { createNoopRefresher } = await loadExtension()
+
+    await expect(createNoopRefresher().refresh()).resolves.toBeUndefined()
   })
 
   it('createNoopConfirmer always confirms', async () => {
@@ -529,10 +568,12 @@ async function loadExtension() {
     USAGE_STATUS_KEY: extension.USAGE_STATUS_KEY,
     createUiNotifier: extension.createUiNotifier,
     createUiConfirmer: extension.createUiConfirmer,
+    createUiRefresher: extension.createUiRefresher,
     createLoaderStatusReporter: extension.createLoaderStatusReporter,
     createConsoleNotifier: extension.createConsoleNotifier,
     createConsoleStatusReporter: extension.createConsoleStatusReporter,
     createNoopConfirmer: extension.createNoopConfirmer,
+    createNoopRefresher: extension.createNoopRefresher,
     createApiKeyProvider: extension.createApiKeyProvider,
     eventHandlers,
   }

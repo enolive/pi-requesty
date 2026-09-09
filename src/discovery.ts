@@ -30,6 +30,10 @@ export type Confirmer = {
   confirm(title: string, message: string): Promise<boolean>
 }
 
+export type Refresher = {
+  refresh(): Promise<void>
+}
+
 export type StatusReporter = {
   set(message: string): void
 }
@@ -110,6 +114,7 @@ export async function finalizeDiscovery(
   env: Env,
   confirmer: Confirmer,
   notifier: Notifier,
+  refresher: Refresher,
 ): Promise<void> {
   const level = notificationLevel(evaluation)
   const summary = buildDiscoverySummary(evaluation)
@@ -138,7 +143,15 @@ Left models.json unchanged.`,
   const shouldUpdate = await confirmer.confirm(title, message)
   if (shouldUpdate) {
     updateModelsJson(evaluation.data, evaluation.passing, env)
-    notifier.notify('Updated models.json. Run /reload to use the changes.', 'info')
+    const refreshResult = await runCatchingAsync(() => refresher.refresh())
+    if (refreshResult.ok) {
+      notifier.notify('Updated models.json. New models are available in /model.', 'info')
+    } else {
+      notifier.notify(
+        `Updated models.json, but the model registry could not be refreshed: ${formatError(refreshResult.error)}. Run /reload or restart Pi to use the changes.`,
+        'warning',
+      )
+    }
     return
   }
 

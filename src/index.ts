@@ -13,6 +13,7 @@ import {
   getArgumentCompletions,
   type Notifier,
   type NotificationLevel,
+  type Refresher,
   runCatching,
   runCatchingAsync,
   type StatusReporter,
@@ -70,6 +71,7 @@ export async function runInteractiveDiscoveryWorkflow(ctx: ExtensionCommandConte
   }
 
   const confirmer = createUiConfirmer(ctx)
+  const refresher = createUiRefresher(ctx)
   const apiProvider = createApiKeyProvider(ctx)
 
   const evaluationResult: Try<DiscoveryEvaluation> = await runWithStatusUi(
@@ -83,7 +85,7 @@ export async function runInteractiveDiscoveryWorkflow(ctx: ExtensionCommandConte
     return
   }
 
-  await finalizeDiscovery(evaluationResult.value, env.value, confirmer, notifier)
+  await finalizeDiscovery(evaluationResult.value, env.value, confirmer, notifier, refresher)
 }
 
 export async function runSilentDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
@@ -96,6 +98,7 @@ export async function runSilentDiscoveryWorkflow(ctx: ExtensionCommandContext, e
   const apiProvider = createApiKeyProvider(ctx)
   const status = createConsoleStatusReporter()
   const confirmer = createNoopConfirmer()
+  const refresher = createNoopRefresher()
 
   const evaluationResult: Try<DiscoveryEvaluation> = await runCatchingAsync(() =>
     evaluateDiscovery(args, env.value, status, apiProvider),
@@ -106,7 +109,7 @@ export async function runSilentDiscoveryWorkflow(ctx: ExtensionCommandContext, e
     return
   }
 
-  await finalizeDiscovery(evaluationResult.value, env.value, confirmer, notifier)
+  await finalizeDiscovery(evaluationResult.value, env.value, confirmer, notifier, refresher)
 }
 
 async function runWithStatusUi<T>(
@@ -200,6 +203,26 @@ export function createUiConfirmer(ctx: ExtensionContext): Confirmer {
     confirm(title, message) {
       return ctx.ui.confirm(title, message)
     },
+  }
+}
+
+/** Re-reads models.json through Pi's model registry so new models are usable without /reload. */
+export function createUiRefresher(ctx: ExtensionContext): Refresher {
+  return {
+    refresh: () =>
+      ctx.modelRegistry.refresh({ allowNetwork: false }).then(result => {
+        if (result.aborted || result.errors.size > 0) {
+          const detail = [...result.errors.entries()].map(([id, error]) => `${id}: ${error.message}`).join(', ')
+          throw new Error(detail || 'refresh aborted')
+        }
+      }),
+  }
+}
+
+/** Non-interactive mode has no live registry; the next Pi start reads models.json anyway. */
+export function createNoopRefresher(): Refresher {
+  return {
+    refresh: () => Promise.resolve(),
   }
 }
 

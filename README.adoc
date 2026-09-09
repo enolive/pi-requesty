@@ -121,11 +121,12 @@ The command:
 - discovers Requesty models (and optional health checks)
 - shows a summary notification (added/removed IDs, health summary)
 - asks for confirmation before writing `~/.pi/agent/models.json`
+- refreshes Pi's model registry so the new models are immediately available in `/model`
 - reports whether the file was updated
 
 If there are no model ID changes, confirmation still offers a metadata refresh write, which might have changed as well.
 
-After a successful write, run `/reload`.
+After a successful write, the updated models are available in `/model` right away.
 
 [source,text]
 ----
