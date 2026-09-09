@@ -16,6 +16,7 @@ const ProviderSchema = z
     name: z.string().optional(),
     baseUrl: z.string().optional(),
     apiKey: z.string().optional(),
+    api: z.string().optional(),
     models: z.array(z.object({ id: z.string() }).catchall(z.unknown())).optional(),
   })
   .catchall(z.unknown())
@@ -93,9 +94,13 @@ export function formatModelsDiffSummary(diff: ModelsDiff): string {
 
 export function updateModelsJson(data: ModelsJson, models: ProviderModelConfig[], envConfig: Env = getEnv()): void {
   const provider = data.providers[envConfig.provider_id]
+  const { name, baseUrl, api, apiKey, models: _existingModels, ...passthrough } = provider
   data.providers[envConfig.provider_id] = {
-    ...provider,
-    apiKey: nonEmptyString(provider.apiKey) ?? '$REQUESTY_API_KEY',
+    name,
+    baseUrl,
+    api,
+    apiKey,
+    ...passthrough,
     models: models.map(model => ({
       id: model.id,
       name: model.name,

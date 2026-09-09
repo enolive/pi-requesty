@@ -71,8 +71,8 @@ Example:
     "requesty-export": {
       "name": "Requesty",
       "baseUrl": "https://router.requesty.ai/v1",
-      "apiKey": "$REQUESTY_API_KEY",
       "api": "openai-completions",
+      "apiKey": "$REQUESTY_API_KEY",
       "models": []
     }
   }

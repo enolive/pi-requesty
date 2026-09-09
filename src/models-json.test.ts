@@ -217,9 +217,19 @@ describe('updateModelsJson', () => {
     expect(written).toMatchSnapshot()
   })
 
-  it('writes REQUESTY_API_KEY reference when selected provider has no apiKey', async () => {
+  it('writes provider keys in a conventional order: name, baseUrl, api, apiKey before passthrough and models', async () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
-      providers: { [PROVIDER_ID]: { models: [] } },
+      providers: {
+        [PROVIDER_ID]: {
+          // deliberately out of order: models was appended after api in the file
+          models: [],
+          customField: 'custom-value',
+          apiKey: 'models-json-key',
+          name: 'Custom Requesty',
+          baseUrl: 'https://example.com/v1',
+          api: 'openai-completions',
+        },
+      },
     })
     const apiKeyProvider = createApiKeyProvider()
     const data = (await getRequestyConfig(apiKeyProvider, envConfig)).data
@@ -227,7 +237,14 @@ describe('updateModelsJson', () => {
     updateModelsJson(data, [createModel()], envConfig)
 
     const written = await readModelsJsonFile(envConfig)
-    expect(written.providers[PROVIDER_ID]?.apiKey).toBe('$REQUESTY_API_KEY')
+    expect(Object.keys(written.providers[PROVIDER_ID])).toEqual([
+      'name',
+      'baseUrl',
+      'api',
+      'apiKey',
+      'customField',
+      'models',
+    ])
   })
 
   it('preserves selected provider fields', async () => {
