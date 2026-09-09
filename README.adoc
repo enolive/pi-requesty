@@ -78,7 +78,7 @@ Example:
 }
 ----
 
-IMPORTANT: Health checks are designed to use only a few tokens, but they still make real Requesty API calls and may consume credits.
+IMPORTANT: Health checks are designed to use only a few tokens, but they still make real Requesty API calls and **will** consume credits.
 
 On startup, the extension fetches `<baseUrl>/models` using the configured `apiKey` as the bearer token and registers discovered and healthy models with Pi.
 
@@ -134,6 +134,14 @@ After a successful write, the updated models are available in `/model` right awa
 ----
 
 Same discovery and health checks, but never prompts to write and leaves `models.json` unchanged.
+
+[source,bash]
+----
+pi -p "/requesty-discover"
+pi -p "/requesty-discover --dry-run"
+----
+
+You can also run the command from the CLI in a non-interactive mode.
 
 == Usage status
 
