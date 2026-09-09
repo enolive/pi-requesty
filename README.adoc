@@ -8,13 +8,14 @@ endif::[]
 
 = pi-requesty-discover
 
-image:https://img.shields.io/npm/v/pi-requesty-discover.svg[npm version, link=https://www.npmjs.com/package/pi-requesty-discover]
+image:https://img.shields.io/npm/v/pi-requesty-discover.svg[npm version,link=https://www.npmjs.com/package/pi-requesty-discover]
 
 This extension helps you discover currently available models in requesty.ai for your Pi Coding Agent.
 
 This is a fork of https://github.com/requestyai/pi-requesty[pi-requesty] with additional features:
 
-* Use `REQUESTY_API_KEY` from the model registry
+* Use the `apiKey` from the model registry allowing you to use
+https://pi.dev/docs/latest/models#value-resolution[pi's full value resolution] capabilities
 * Health-check available models and write a log about them
 * Brief information about what was found, including added/removed models, health summary
 * Confirm before writing `models.json`, with a dry-run mode that only previews
@@ -84,7 +85,7 @@ On startup, the extension fetches `<baseUrl>/models` using the configured `apiKe
 
 === Environment variables
 
-[cols="1,1,1,1,2", options="header"]
+[cols="1,1,1,1,2",options="header"]
 |===
 | Name | Required | Type | Default | Meaning
 
@@ -126,8 +127,6 @@ The command:
 
 If there are no model ID changes, confirmation still offers a metadata refresh write, which might have changed as well.
 
-After a successful write, the updated models are available in `/model` right away.
-
 [source,text]
 ----
 /requesty-discover --dry-run
@@ -159,6 +158,7 @@ When your API key has no monthly limit (`monthly_limit` is `0`), the limit is tr
 <API Key Name>: $63.55 (unlimited)
 ----
 
-When you select a model from a provider other than `REQUESTY_PROVIDER_ID`, the status is cleared — there is no Requesty usage to show for it. If `REQUESTY_API_KEY` is not configured, the status is left untouched.
+When you select a model from a provider other than `REQUESTY_PROVIDER_ID`, the status is cleared — there is no Requesty usage to show for it.
 
-NOTE: The footer update is best-effort and never blocks a turn. If it fails (network error, stale context after `/reload`), it fails silently without spamming notifications.
+NOTE: The footer update is best-effort and never blocks a turn.
+If it fails (network error, stale context after `/reload`), it fails silently without spamming notifications.
