@@ -1,4 +1,4 @@
-import { ModelRegistry, ProviderConfig, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
+import { ProviderConfig, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 import fs from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
@@ -6,6 +6,10 @@ import { type Env, getEnv } from './env'
 
 const DEFAULT_BASE_URL = 'https://router.requesty.ai/v1'
 const DEFAULT_NAME = 'Requesty'
+
+export type ApiKeyProvider = {
+  getApiKey(providerId: string): Promise<string | undefined>
+}
 
 const ProviderSchema = z
   .object({
@@ -42,7 +46,10 @@ export type ModelsDiff = {
   removed: string[]
 }
 
-export async function getRequestyConfig(registry: ModelRegistry, envConfig: Env = getEnv()): Promise<RequestyConfig> {
+export async function getRequestyConfig(
+  apiKeyProvider: ApiKeyProvider,
+  envConfig: Env = getEnv(),
+): Promise<RequestyConfig> {
   const data = readModelsJson(envConfig)
   const provider = data.providers[envConfig.provider_id]
 
@@ -50,7 +57,7 @@ export async function getRequestyConfig(registry: ModelRegistry, envConfig: Env 
     throw new Error(`${envConfig.models_json_path} does not define providers.${envConfig.provider_id}`)
   }
 
-  const apiKey = await registry.getApiKeyForProvider(envConfig.provider_id)
+  const apiKey = await apiKeyProvider.getApiKey(envConfig.provider_id)
   if (!apiKey) {
     throw new Error(`No API key found for provider ${envConfig.provider_id}`)
   }

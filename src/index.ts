@@ -2,11 +2,11 @@ import {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
-  ModelRegistry,
   ProviderModelConfig,
 } from '@earendil-works/pi-coding-agent'
 import { type Env, getEnv } from './env'
 import {
+  ApiKeyProvider,
   diffModels,
   formatModelsDiffSummary,
   getRequestyConfig,
@@ -75,7 +75,8 @@ export default function (pi: ExtensionAPI) {
   })
 
   pi.on('session_start', (_event, ctx) => {
-    complainOnBrokenEnv(ctx, env)
+    const notifier = createUiNotifier(ctx)
+    complainOnBrokenEnv(notifier, env)
     void updateUsageStatus(ctx, env)
   })
 
@@ -85,22 +86,23 @@ export default function (pi: ExtensionAPI) {
 }
 
 export async function runDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
-  complainOnBrokenEnv(ctx, env)
+  const notifier = createUiNotifier(ctx)
+  complainOnBrokenEnv(notifier, env)
   if (!env.ok) return
   // Interactive TUI command; no print/json/rpc path.
   if (ctx.mode !== 'tui') {
     return
   }
 
-  const notifier = createUiNotifier(ctx)
   const confirmer = createUiConfirmer(ctx)
+  const apiProvider = createApiKeyProvider(ctx)
 
   // Phase A: progress UI only. Loader must close before confirm (Phase B).
   // Errors are wrapped because ctx.ui.custom resolves via done() and does not reject.
   const evaluationResult: Try<DiscoveryEvaluation> = await runWithStatusUi(
     ctx,
     'Discovering models...',
-    async status => await runCatchingAsync(() => evaluateDiscovery(args, env.value, status, ctx)),
+    async status => await runCatchingAsync(() => evaluateDiscovery(args, env.value, status, apiProvider)),
   )
 
   if (!evaluationResult.ok) {
@@ -137,12 +139,12 @@ async function evaluateDiscovery(
   args: string,
   env: Env,
   status: StatusReporter,
-  ctx: ExtensionContext,
+  apiKeyProvider: ApiKeyProvider,
 ): Promise<DiscoveryEvaluation> {
   status.set('Discovering Requesty models...')
   const dryRun = args.split(' ').includes(DRY_RUN_ARG)
 
-  const { data, provider, existingModelIds } = await getRequestyConfig(ctx.modelRegistry, env)
+  const { data, provider, existingModelIds } = await getRequestyConfig(apiKeyProvider, env)
   const models = await discoverModels(provider)
   const modelsMap = new Map(models.map(m => [m.id, m]))
 
@@ -305,7 +307,8 @@ async function updateUsageStatus(ctx: ExtensionContext, env: Try<Env>): Promise<
       ctx.ui.setStatus(USAGE_STATUS_KEY, undefined)
       return
     }
-    const info = await fetchUsageStatus(ctx.modelRegistry, env.value)
+    const apiKeyProvider = createApiKeyProvider(ctx)
+    const info = await fetchUsageStatus(apiKeyProvider, env.value)
     if (latestToken !== token) return
     ctx.ui.setStatus(USAGE_STATUS_KEY, formatUsageStatus(info))
   } catch {
@@ -325,12 +328,12 @@ export function formatUsageStatus(info: ApiKeyInfo): string {
 
 let lastFetched: { value: ApiKeyInfo; time: Date } | undefined
 
-async function fetchUsageStatus(registry: ModelRegistry, env: Env): Promise<ApiKeyInfo> {
+async function fetchUsageStatus(apiKeyProvider: ApiKeyProvider, env: Env): Promise<ApiKeyInfo> {
   const now = new Date()
   if (lastFetched?.time && now.getTime() - lastFetched.time.getTime() < 2000) {
     return lastFetched.value
   }
-  const { provider } = await getRequestyConfig(registry, env)
+  const { provider } = await getRequestyConfig(apiKeyProvider, env)
   const value = await fetchApiUsage(provider)
   lastFetched = { value, time: new Date() }
   return value
@@ -363,9 +366,16 @@ async function runCatchingAsync<T>(fn: () => Promise<T>): Promise<Try<T>> {
   }
 }
 
-function complainOnBrokenEnv(ctx: ExtensionContext, env: Try<Env>) {
+function complainOnBrokenEnv(notifier: Notifier, env: Try<Env>) {
   if (!env.ok) {
-    const notifier = createUiNotifier(ctx)
     notifier.notify(`failed to load env: ${formatError(env.error)}`, 'error')
+  }
+}
+
+function createApiKeyProvider(ctx: ExtensionContext): ApiKeyProvider {
+  return {
+    async getApiKey(providerId: string) {
+      return ctx.modelRegistry.getApiKeyForProvider(providerId)
+    },
   }
 }
