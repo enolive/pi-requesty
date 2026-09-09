@@ -311,11 +311,11 @@ async function updateUsageStatus(ctx: ExtensionContext, env: Try<Env>): Promise<
 export function formatUsageStatus(info: ApiKeyInfo): string {
   const spend = `$${info.monthlySpend.toFixed(2)}`
   if (info.monthlyLimit <= 0) {
-    return `Requesty Usage (${info.name}): ${spend} (unlimited)`
+    return `${info.name}: ${spend} (unlimited)`
   }
   const limit = `$${info.monthlyLimit.toFixed(2)}`
   const percent = Math.floor((info.monthlySpend / info.monthlyLimit) * 100)
-  return `Requesty Usage (${info.name}): ${spend}/${limit} (${percent}%)`
+  return `${info.name}: ${spend}/${limit} (${percent}%)`
 }
 
 let lastFetched: { value: ApiKeyInfo; time: Date } | undefined
