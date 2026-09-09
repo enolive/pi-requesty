@@ -121,6 +121,102 @@ describe('getRequestyConfig', () => {
     expect(config.provider.baseUrl).toBe('https://router.requesty.ai/v1')
   })
 
+  it('resolves $REQUESTY_BASE_URL placeholder from env config', async () => {
+    const envConfig = await createEnvWithModelsJson(tempDirectory, {
+      providers: {
+        [PROVIDER_ID]: {
+          baseUrl: '$REQUESTY_BASE_URL',
+          apiKey: 'models-json-key',
+        },
+      },
+    })
+    envConfig.requesty_base_url = 'https://custom.requesty.example/v1'
+
+    const config = getRequestyConfig(envConfig)
+
+    expect(config.provider.baseUrl).toBe('https://custom.requesty.example/v1')
+  })
+
+  it('removes trailing slash from env-resolved base URL', async () => {
+    const envConfig = await createEnvWithModelsJson(tempDirectory, {
+      providers: {
+        [PROVIDER_ID]: {
+          baseUrl: '$REQUESTY_BASE_URL',
+          apiKey: 'models-json-key',
+        },
+      },
+    })
+    envConfig.requesty_base_url = 'https://custom.requesty.example/v1///'
+
+    const config = getRequestyConfig(envConfig)
+
+    expect(config.provider.baseUrl).toBe('https://custom.requesty.example/v1')
+  })
+
+  it('throws when $REQUESTY_BASE_URL placeholder is used but REQUESTY_BASE_URL is unset', async () => {
+    const envConfig = await createEnvWithModelsJson(tempDirectory, {
+      providers: {
+        [PROVIDER_ID]: {
+          baseUrl: '$REQUESTY_BASE_URL',
+          apiKey: 'models-json-key',
+        },
+      },
+    })
+    envConfig.requesty_base_url = ''
+
+    const readConfig = () => getRequestyConfig(envConfig)
+
+    expect(readConfig).toThrow(/REQUESTY_BASE_URL/)
+  })
+
+  it('does not treat a baseUrl containing the placeholder as a placeholder', async () => {
+    const envConfig = await createEnvWithModelsJson(tempDirectory, {
+      providers: {
+        [PROVIDER_ID]: {
+          baseUrl: 'https://router.requesty.ai/v1/$REQUESTY_BASE_URL',
+          apiKey: 'models-json-key',
+        },
+      },
+    })
+    envConfig.requesty_base_url = 'https://custom.requesty.example/v1'
+
+    const config = getRequestyConfig(envConfig)
+
+    expect(config.provider.baseUrl).toBe('https://router.requesty.ai/v1/$REQUESTY_BASE_URL')
+  })
+
+  it('defaults manageBaseUrl to the default manage URL when REQUESTY_MANAGE_BASE_URL is unset', async () => {
+    const envConfig = await createEnvWithModelsJson(tempDirectory, {
+      providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
+    })
+
+    const config = getRequestyConfig(envConfig)
+
+    expect(config.provider.manageBaseUrl).toBe('https://api-v2.requesty.ai/v1/manage')
+  })
+
+  it('resolves manageBaseUrl from REQUESTY_MANAGE_BASE_URL', async () => {
+    const envConfig = await createEnvWithModelsJson(tempDirectory, {
+      providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
+    })
+    envConfig.requesty_manage_base_url = 'https://custom.requesty.example/v1/manage'
+
+    const config = getRequestyConfig(envConfig)
+
+    expect(config.provider.manageBaseUrl).toBe('https://custom.requesty.example/v1/manage')
+  })
+
+  it('removes trailing slash from manageBaseUrl', async () => {
+    const envConfig = await createEnvWithModelsJson(tempDirectory, {
+      providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
+    })
+    envConfig.requesty_manage_base_url = 'https://custom.requesty.example/v1/manage///'
+
+    const config = getRequestyConfig(envConfig)
+
+    expect(config.provider.manageBaseUrl).toBe('https://custom.requesty.example/v1/manage')
+  })
+
   it('exposes existing model IDs of the selected provider', async () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: {
@@ -314,6 +410,8 @@ function createTestEnv(tempDirectory: TempDirectory): Env {
     models_json_path: tempDirectory.modelsJsonPath,
     health_check_log_path: tempDirectory.healthCheckLogPath,
     provider_id: DEFAULT_PROVIDER_ID,
+    requesty_base_url: '',
+    requesty_manage_base_url: '',
     health_check_mode: 'full',
   }
 }

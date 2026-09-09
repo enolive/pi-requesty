@@ -37,7 +37,19 @@ const HEALTH_CHECK_LOG_PATH = '/tmp/pi-requesty-home/.pi/agent/requesty-health-c
 const provider = {
   name: 'Requesty',
   baseUrl: 'https://router.requesty.ai/v1',
+  manageBaseUrl: 'https://api-v2.requesty.ai/v1/manage',
   apiKey: 'test-key',
+} satisfies Provider & { name: string; manageBaseUrl: string }
+
+const modelsJson = {
+  providers: {
+    [REQUESTY_PROVIDER_ID]: {
+      name: 'Requesty',
+      baseUrl: 'https://router.requesty.ai/v1',
+      apiKey: 'test-key',
+      models: [],
+    },
+  },
 }
 
 describe('extension registration', () => {

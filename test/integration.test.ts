@@ -18,6 +18,8 @@ beforeEach(async () => {
       models_json_path: tempDirectory?.modelsJsonPath,
       health_check_log_path: tempDirectory?.healthCheckLogPath,
       provider_id: DEFAULT_PROVIDER_ID,
+      requesty_base_url: BASE_URL,
+      requesty_manage_base_url: '',
       health_check_mode: 'full',
     }),
   }))
@@ -103,7 +105,6 @@ describe('requesty-models-discover integration', () => {
     })
     expect(capturedModelRefreshes).toEqual([{ allowNetwork: false }])
   })
-})
 
 async function writeInitialModelsJson(modelsJsonPath: string): Promise<void> {
   await fs.writeFile(

@@ -3,7 +3,6 @@ import { z } from 'zod'
 
 const DEFAULT_CONTEXT_WINDOW = 128000
 const DEFAULT_MAX_TOKENS = 4096
-const REQUESTY_MANAGE_URL = 'https://api-v2.requesty.ai/v1/manage'
 
 const RequestyModelSchema = z
   .object({
@@ -28,6 +27,7 @@ const ListModelsResponseSchema = z.object({
 
 type Provider = {
   baseUrl: string
+  manageBaseUrl?: string
   apiKey: string
 }
 
@@ -88,7 +88,7 @@ const ApiKeyInfoSchema = z
 export type ApiKeyInfo = z.infer<typeof ApiKeyInfoSchema>
 
 export async function fetchApiUsage(provider: Provider, options: { timeoutMs?: number } = {}): Promise<ApiKeyInfo> {
-  const url = `${REQUESTY_MANAGE_URL}/apikey/self`
+  const url = `${provider.manageBaseUrl}/apikey/self`
   const timeoutMs = options.timeoutMs ?? 2_000
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${provider.apiKey}` },

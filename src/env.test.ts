@@ -7,6 +7,8 @@ const REQUESTY_ENV_KEYS = [
   'REQUESTY_API_KEY',
   'REQUESTY_PROVIDER_ID',
   'REQUESTY_HEALTH_CHECK_MODE',
+  'REQUESTY_BASE_URL',
+  'REQUESTY_MANAGE_BASE_URL',
   'PI_CODING_AGENT_DIR',
 ] as const
 
@@ -88,6 +90,38 @@ describe('getEnv', () => {
     const envConfig = getEnv()
 
     expect(envConfig.provider_id).toBe('custom-provider')
+  })
+
+  it('defaults requesty_base_url to an empty string when REQUESTY_BASE_URL is unset', () => {
+    delete process.env.REQUESTY_BASE_URL
+
+    const envConfig = getEnv()
+
+    expect(envConfig.requesty_base_url).toBe('')
+  })
+
+  it('reads REQUESTY_BASE_URL', () => {
+    process.env.REQUESTY_BASE_URL = 'https://custom.requesty.example/v1'
+
+    const envConfig = getEnv()
+
+    expect(envConfig.requesty_base_url).toBe('https://custom.requesty.example/v1')
+  })
+
+  it('defaults requesty_manage_base_url to an empty string when REQUESTY_MANAGE_BASE_URL is unset', () => {
+    delete process.env.REQUESTY_MANAGE_BASE_URL
+
+    const envConfig = getEnv()
+
+    expect(envConfig.requesty_manage_base_url).toBe('')
+  })
+
+  it('reads REQUESTY_MANAGE_BASE_URL', () => {
+    process.env.REQUESTY_MANAGE_BASE_URL = 'https://custom.requesty.example/v1/manage'
+
+    const envConfig = getEnv()
+
+    expect(envConfig.requesty_manage_base_url).toBe('https://custom.requesty.example/v1/manage')
   })
 })
 
