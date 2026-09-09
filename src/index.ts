@@ -2,6 +2,7 @@ import {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
+  ModelRegistry,
   ProviderModelConfig,
 } from '@earendil-works/pi-coding-agent'
 import { type Env, getEnv } from './env'
@@ -10,6 +11,7 @@ import {
   formatModelsDiffSummary,
   getRequestyConfig,
   type ModelsDiff,
+  ModelsJson,
   updateModelsJson,
 } from './models-json'
 import { type ApiKeyInfo, discoverModels, fetchApiUsage } from './requesty-api'
@@ -40,8 +42,6 @@ export type StatusReporter = {
   set(message: string): void
 }
 
-type ModelsJsonData = ReturnType<typeof getRequestyConfig>['data']
-
 type DiscoveryEvaluation = {
   dryRun: boolean
   modelCount: number
@@ -50,7 +50,7 @@ type DiscoveryEvaluation = {
   diff: ModelsDiff
   healthCheckSummary: string
   logNote: string
-  data: ModelsJsonData
+  data: ModelsJson
 }
 
 export type Try<T> = { ok: true; value: T } | { ok: false; error: unknown }
@@ -100,7 +100,7 @@ export async function runDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Tr
   const evaluationResult: Try<DiscoveryEvaluation> = await runWithStatusUi(
     ctx,
     'Discovering models...',
-    async status => await runCatchingAsync(() => evaluateDiscovery(args, env.value, status)),
+    async status => await runCatchingAsync(() => evaluateDiscovery(args, env.value, status, ctx)),
   )
 
   if (!evaluationResult.ok) {
@@ -122,8 +122,8 @@ async function runWithStatusUi<T>(
   initialMessage: string,
   fn: (status: StatusReporter) => Promise<T>,
 ): Promise<T> {
-  return ctx.ui.custom<T>((_tui, theme, _kb, done) => {
-    const loader = new RequestyStatusLoader(_tui, theme, initialMessage)
+  return ctx.ui.custom<T>((tui, theme, _kb, done) => {
+    const loader = new RequestyStatusLoader(tui, theme, initialMessage)
     const status = createLoaderStatusReporter(loader)
     void Promise.resolve()
       .then(() => fn(status))
@@ -133,11 +133,16 @@ async function runWithStatusUi<T>(
   })
 }
 
-async function evaluateDiscovery(args: string, env: Env, status: StatusReporter): Promise<DiscoveryEvaluation> {
+async function evaluateDiscovery(
+  args: string,
+  env: Env,
+  status: StatusReporter,
+  ctx: ExtensionContext,
+): Promise<DiscoveryEvaluation> {
   status.set('Discovering Requesty models...')
   const dryRun = args.split(' ').includes(DRY_RUN_ARG)
 
-  const { data, provider, existingModelIds } = getRequestyConfig(env)
+  const { data, provider, existingModelIds } = await getRequestyConfig(ctx.modelRegistry, env)
   const models = await discoverModels(provider)
   const modelsMap = new Map(models.map(m => [m.id, m]))
 
@@ -300,7 +305,7 @@ async function updateUsageStatus(ctx: ExtensionContext, env: Try<Env>): Promise<
       ctx.ui.setStatus(USAGE_STATUS_KEY, undefined)
       return
     }
-    const info = await fetchUsageStatus(env.value)
+    const info = await fetchUsageStatus(ctx.modelRegistry, env.value)
     if (latestToken !== token) return
     ctx.ui.setStatus(USAGE_STATUS_KEY, formatUsageStatus(info))
   } catch {
@@ -320,12 +325,12 @@ export function formatUsageStatus(info: ApiKeyInfo): string {
 
 let lastFetched: { value: ApiKeyInfo; time: Date } | undefined
 
-async function fetchUsageStatus(env: Env): Promise<ApiKeyInfo> {
+async function fetchUsageStatus(registry: ModelRegistry, env: Env): Promise<ApiKeyInfo> {
   const now = new Date()
   if (lastFetched?.time && now.getTime() - lastFetched.time.getTime() < 2000) {
     return lastFetched.value
   }
-  const { provider } = getRequestyConfig(env)
+  const { provider } = await getRequestyConfig(registry, env)
   const value = await fetchApiUsage(provider)
   lastFetched = { value, time: new Date() }
   return value

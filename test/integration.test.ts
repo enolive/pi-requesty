@@ -18,7 +18,6 @@ beforeEach(async () => {
       models_json_path: tempDirectory?.modelsJsonPath,
       health_check_log_path: tempDirectory?.healthCheckLogPath,
       provider_id: DEFAULT_PROVIDER_ID,
-      requesty_api_key: 'test-api-key-from-env',
       health_check_mode: 'full',
     }),
   }))
@@ -87,7 +86,7 @@ describe('requesty-models-discover integration', () => {
     // 3+4: health check model with reasoning
     expect(usedAuthKeys).toHaveLength(4)
     const uniqueAuthKeys = [...new Set(usedAuthKeys)]
-    expect(uniqueAuthKeys).toEqual(['Bearer test-api-key-from-env'])
+    expect(uniqueAuthKeys).toEqual(['Bearer test-api-key'])
     const modelsJson = await readJson(tempDirectory.modelsJsonPath)
     expect(modelsJson).toMatchSnapshot()
     const healthCheckLog = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')

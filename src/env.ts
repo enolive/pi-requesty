@@ -11,7 +11,6 @@ export type Env = {
   models_json_path: string
   health_check_log_path: string
   provider_id: string
-  requesty_api_key: string
   health_check_mode: z.infer<typeof HealthCheckModeSchema>
 }
 
@@ -22,16 +21,11 @@ export function getEnv(): Env {
     throw new Error(prettifyError(result.error))
   }
 
-  const apiKey = envVars.REQUESTY_API_KEY
-  if (!apiKey) {
-    throw new Error(`apiKey must be set via REQUESTY_API_KEY env var`)
-  }
   const agentPath = getAgentDir()
   return {
     models_json_path: path.join(agentPath, 'models.json'),
     health_check_log_path: path.join(agentPath, 'requesty-health-check.log'),
     provider_id: envVars.REQUESTY_PROVIDER_ID ?? DEFAULT_PROVIDER_ID,
-    requesty_api_key: apiKey,
     health_check_mode: result.data,
   }
 }

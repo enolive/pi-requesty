@@ -64,14 +64,6 @@ describe('getEnv', () => {
     expect(createEnv).toThrow(/Invalid option/)
   })
 
-  it('fails when apiKey is not set via REQUESTY_API_KEY', () => {
-    delete process.env.REQUESTY_API_KEY
-
-    const createEnv = () => getEnv()
-
-    expect(createEnv).toThrow(/apiKey must be set via REQUESTY_API_KEY env var/)
-  })
-
   it('uses provided homeDir', () => {
     process.env.PI_CODING_AGENT_DIR = TEST_HOME_DIR
     const envConfig = getEnv()
@@ -88,14 +80,6 @@ describe('getEnv', () => {
 
     expect(envConfig.models_json_path).toBe(`${defaultHomeDir}/.pi/agent/models.json`)
     expect(envConfig.health_check_log_path).toBe(`${defaultHomeDir}/.pi/agent/requesty-health-check.log`)
-  })
-
-  it('reads REQUESTY_API_KEY', () => {
-    process.env.REQUESTY_API_KEY = 'test-api-key'
-
-    const envConfig = getEnv()
-
-    expect(envConfig.requesty_api_key).toBe('test-api-key')
   })
 
   it('reads REQUESTY_PROVIDER_ID', () => {

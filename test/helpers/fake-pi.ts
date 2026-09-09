@@ -1,4 +1,9 @@
-import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from '@earendil-works/pi-coding-agent'
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ModelRegistry,
+  RegisteredCommand,
+} from '@earendil-works/pi-coding-agent'
 import type { RequestyStatusLoader } from '../../src/ui/requesty-status-loader.ts'
 import { DEFAULT_PROVIDER_ID } from '../../src/env'
 
@@ -86,6 +91,23 @@ export function createFakeCommandContext(options: FakeCommandContextOptions = {}
 
   const capturedUiOrder: ('notify' | 'confirm')[] = []
   const modelProvider = options.modelProvider ?? DEFAULT_PROVIDER_ID
+
+  /**
+   * The extension fires off the usage-status update without awaiting it, so tests must await the
+   * observable effect: the status line writes. Drains microtasks until `expected` writes happened
+   * and fails fast instead of hanging if they never do.
+   */
+  const waitForStatusLines = async (expected: number, maxRounds = 100): Promise<void> => {
+    for (let drained = 0; capturedStatusLines.length < expected && drained < maxRounds; drained++) {
+      await Promise.resolve()
+    }
+    if (capturedStatusLines.length < expected) {
+      throw new Error(
+        `Timed out waiting for ${expected} status line write(s) after ${maxRounds} microtask rounds; ` +
+          `captured ${JSON.stringify(capturedStatusLines)}`,
+      )
+    }
+  }
   const ctx = {
     mode: options.mode ?? 'tui',
     hasUI: options.hasUI ?? true,
@@ -105,9 +127,24 @@ export function createFakeCommandContext(options: FakeCommandContextOptions = {}
         capturedStatusLines.push({ key, text })
       },
     },
+    modelRegistry: createModelRegistry(),
   } as unknown as ExtensionCommandContext
 
-  return { ctx, capturedNotifications, capturedStatuses, capturedStatusLines, capturedConfirmations, capturedUiOrder }
+  return {
+    ctx,
+    capturedNotifications,
+    capturedStatuses,
+    capturedStatusLines,
+    capturedConfirmations,
+    capturedUiOrder,
+    waitForStatusLines,
+  }
+}
+
+export function createModelRegistry(apiKey: string | null = 'test-api-key'): ModelRegistry {
+  return {
+    getApiKeyForProvider: () => Promise.resolve(apiKey ?? undefined),
+  } as unknown as ModelRegistry
 }
 
 export async function fireEvent(

@@ -14,7 +14,7 @@ This extension helps you discover currently available models in requesty.ai for 
 
 This is a fork of https://github.com/requestyai/pi-requesty[pi-requesty] with additional features:
 
-* Use `REQUESTY_API_KEY` from the environment
+* Use `REQUESTY_API_KEY` from the model registry
 * Health-check available models and write a log about them
 * Brief information about what was found, including added/removed models, health summary
 * Confirm before writing `models.json`, with a dry-run mode that only previews
@@ -78,26 +78,15 @@ Example:
 }
 ----
 
-IMPORTANT: The `apiKey` from `models.json` is not used by this extension.
-It may contain Pi-specific environment-variable substitution that the extension cannot reliably resolve.
-Set `REQUESTY_API_KEY` instead. This variable is required.
-You can configure the real `apiKey` as you like, but it would be recommended to use the same variable as for the model discovery.
-
 IMPORTANT: Health checks are designed to use only a few tokens, but they still make real Requesty API calls and may consume credits.
 
-On startup, the extension fetches `<baseUrl>/models` using `REQUESTY_API_KEY` as the bearer token and registers discovered and healthy models with Pi.
+On startup, the extension fetches `<baseUrl>/models` using the configured `apiKey` as the bearer token and registers discovered and healthy models with Pi.
 
 === Environment variables
 
 [cols="1,1,1,1,2", options="header"]
 |===
 | Name | Required | Type | Default | Meaning
-
-| `REQUESTY_API_KEY`
-| yes
-| `string`
-|
-| Requesty API key used for model discovery and health checks.
 
 | `REQUESTY_PROVIDER_ID`
 | no
