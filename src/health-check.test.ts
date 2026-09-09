@@ -555,7 +555,6 @@ describe('health summary and log output', () => {
     health_check_mode: 'basic',
     models_json_path: '',
     provider_id: DEFAULT_PROVIDER_ID,
-    requesty_api_key: '',
   }
 
   beforeEach(async () => {

@@ -1,8 +1,8 @@
-import type { ProviderConfig, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
+import { ModelRegistry, ProviderConfig, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 import fs from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
-import { getEnv, type Env } from './env'
+import { type Env, getEnv } from './env'
 
 const DEFAULT_BASE_URL = 'https://router.requesty.ai/v1'
 const DEFAULT_NAME = 'Requesty'
@@ -22,7 +22,7 @@ const ModelsJsonSchema = z
   })
   .catchall(z.unknown())
 
-type ModelsJson = z.infer<typeof ModelsJsonSchema>
+export type ModelsJson = z.infer<typeof ModelsJsonSchema>
 type ModelsJsonProvider = z.infer<typeof ProviderSchema>
 
 export type RequestyProvider = ModelsJsonProvider & {
@@ -42,7 +42,7 @@ export type ModelsDiff = {
   removed: string[]
 }
 
-export function getRequestyConfig(envConfig: Env = getEnv()): RequestyConfig {
+export async function getRequestyConfig(registry: ModelRegistry, envConfig: Env = getEnv()): Promise<RequestyConfig> {
   const data = readModelsJson(envConfig)
   const provider = data.providers[envConfig.provider_id]
 
@@ -50,7 +50,10 @@ export function getRequestyConfig(envConfig: Env = getEnv()): RequestyConfig {
     throw new Error(`${envConfig.models_json_path} does not define providers.${envConfig.provider_id}`)
   }
 
-  const apiKey = envConfig.requesty_api_key
+  const apiKey = await registry.getApiKeyForProvider(envConfig.provider_id)
+  if (!apiKey) {
+    throw new Error(`No API key found for provider ${envConfig.provider_id}`)
+  }
   return {
     data,
     existingModelIds: (provider.models ?? []).map(m => m.id),

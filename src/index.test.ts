@@ -637,9 +637,10 @@ describe('usage status', () => {
       const fetchUsage = createResolved(apiKeyInfo)
       configureMockedDependencies({ fetchApiUsageResults: [fetchUsage] })
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
-      const { ctx, capturedStatusLines } = createFakeCommandContext()
+      const { ctx, capturedStatusLines, waitForStatusLines } = createFakeCommandContext()
 
       await fireEvent(eventHandlers, eventName, ctx)
+      await waitForStatusLines(1)
 
       expect(capturedStatusLines).toEqual([{ key: USAGE_STATUS_KEY, text: containing('Playground:') }])
     })
@@ -667,12 +668,12 @@ describe('usage status', () => {
       const second = createDeferred<ApiKeyInfo>()
       configureMockedDependencies({ fetchApiUsageResults: [first.promise, second.promise] })
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
-      const { ctx, capturedStatusLines } = createFakeCommandContext()
+      const { ctx, capturedStatusLines, waitForStatusLines } = createFakeCommandContext()
 
       await fireEvent(eventHandlers, 'turn_end', ctx) // first turn starts, fetch hangs on `first`
       await fireEvent(eventHandlers, 'turn_end', ctx) // second turn starts, fetch hangs on `second`
       second.resolve(secondInfo) // newer resolves first
-      await flushMicrotasks()
+      await waitForStatusLines(1)
       first.resolve(firstInfo) // older resolves after, must be suppressed
       await flushMicrotasks()
 
@@ -685,10 +686,12 @@ describe('usage status', () => {
       const secondInfo: ApiKeyInfo = { name: 'Second', monthlySpend: 90, monthlyLimit: 100 }
       configureMockedDependencies({ fetchApiUsageResults: [createResolved(firstInfo), createResolved(secondInfo)] })
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
-      const { ctx, capturedStatusLines } = createFakeCommandContext()
+      const { ctx, capturedStatusLines, waitForStatusLines } = createFakeCommandContext()
 
       await fireEvent(eventHandlers, 'turn_end', ctx)
+      await waitForStatusLines(1)
       await fireEvent(eventHandlers, 'turn_end', ctx)
+      await flushMicrotasks()
 
       const expected = { key: USAGE_STATUS_KEY, text: containing('First:') }
       expect(capturedStatusLines.at(-1)).toEqual(expected)
@@ -700,11 +703,13 @@ describe('usage status', () => {
       const secondInfo: ApiKeyInfo = { name: 'Second', monthlySpend: 90, monthlyLimit: 100 }
       configureMockedDependencies({ fetchApiUsageResults: [createResolved(firstInfo), createResolved(secondInfo)] })
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
-      const { ctx, capturedStatusLines } = createFakeCommandContext()
+      const { ctx, capturedStatusLines, waitForStatusLines } = createFakeCommandContext()
 
       await fireEvent(eventHandlers, 'turn_end', ctx)
+      await waitForStatusLines(1)
       timers.advanceTimersByTime(2000)
       await fireEvent(eventHandlers, 'turn_end', ctx)
+      await waitForStatusLines(2)
 
       const expected = { key: USAGE_STATUS_KEY, text: containing('Second:') }
       expect(capturedStatusLines.at(-1)).toEqual(expected)
@@ -716,12 +721,12 @@ describe('usage status', () => {
       const second = createDeferred<ApiKeyInfo>()
       configureMockedDependencies({ fetchApiUsageResults: [first.promise, second.promise] })
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
-      const { ctx, capturedStatusLines } = createFakeCommandContext()
+      const { ctx, capturedStatusLines, waitForStatusLines } = createFakeCommandContext()
 
       await fireEvent(eventHandlers, 'turn_end', ctx)
       await fireEvent(eventHandlers, 'turn_end', ctx)
       second.resolve(secondInfo)
-      await flushMicrotasks()
+      await waitForStatusLines(1)
       first.reject(new Error('HTTP 500 boom'))
       await flushMicrotasks()
 
@@ -773,8 +778,11 @@ function containing(substr: string): string {
   return expect.stringContaining(substr) as string
 }
 
-async function flushMicrotasks(): Promise<void> {
-  await Promise.resolve()
+/** Drain pending microtasks so detached (fire-and-forget) async chains can settle. */
+async function flushMicrotasks(rounds = 100): Promise<void> {
+  for (let drained = 0; drained < rounds; drained++) {
+    await Promise.resolve()
+  }
 }
 
 /** Configure mocked domain deps. No Pi registration. */
@@ -803,7 +811,7 @@ function mockModelsModule(scenario: MockScenario) {
   if (scenario.getRequestyConfigError) {
     getRequestyConfig.mockThrow(scenario.getRequestyConfigError)
   } else {
-    getRequestyConfig.mockReturnValue({
+    getRequestyConfig.mockResolvedValue({
       data: modelsJson,
       provider,
       existingModelIds: [],
@@ -865,11 +873,10 @@ function mockHealthCheckModule(healthResults: HealthCheckResult[]) {
 }
 
 function mockEnvModule(options: MockScenario): Try<Env> {
-  const mockedEnv = {
+  const mockedEnv: Env = {
     models_json_path: MODELS_JSON_PATH,
     health_check_log_path: HEALTH_CHECK_LOG_PATH,
     provider_id: REQUESTY_PROVIDER_ID,
-    requesty_api_key: 'ignore-me-plz',
     health_check_mode: options.healthCheckMode ?? 'basic',
   }
   const getEnv = vi.mocked(EnvModule.getEnv)
