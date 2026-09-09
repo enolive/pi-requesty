@@ -6,10 +6,10 @@ import type { ApiKeyInfo } from './requesty-api'
 import * as RequestyApiModule from './requesty-api'
 import * as ModelsJsonModule from './models-json'
 import * as EnvModule from './env'
+import { Env } from './env'
 import { createFakeCommandContext, createFakePi, fireEvent } from '../test/helpers/fake-pi'
 import { shuffleCompareFn } from '../test/helpers/shuffle.ts'
 import { resetUsageStatusCache, Try } from './index.ts'
-import { Env } from './env'
 
 vi.mock('./health-check')
 vi.mock('./models-json')
@@ -115,6 +115,17 @@ describe('discovery workflow', () => {
 
     expect(updateModelsJson).not.toHaveBeenCalled()
     expect(capturedNotifications).toMatchSnapshot()
+  })
+
+  it('uses apiKey from models registry', async () => {
+    const { mockedEnv, discoverModels } = configureMockedDependencies()
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx } = createFakeCommandContext({ knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' } })
+    const expectedProvider = { ...provider, apiKey: 'my-api-key' }
+
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
+
+    expect(discoverModels).toHaveBeenCalledWith(expectedProvider)
   })
 
   it('updates models.json and notifies info on no failures', async () => {
@@ -302,6 +313,83 @@ describe('discovery workflow', () => {
       'Checking models 1/2...',
       'Checking models 2/2...',
     ])
+  })
+})
+
+describe('non interactive discovery workflow', () => {
+  it('runs when mode is not tui', async () => {
+    const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
+    const healthResults = [
+      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
+      createHealthCheckResult({ modelId: 'requesty/model-b', ok: true }),
+    ]
+    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ models, healthResults })
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx } = createFakeCommandContext({
+      mode: 'print',
+    })
+    const consoleSpy = vi.spyOn(console, 'log')
+
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
+
+    expect(updateModelsJson).toHaveBeenCalledWith(modelsJson, models, expect.any(Object))
+    expect(consoleSpy.mock.calls).toMatchSnapshot()
+  })
+
+  it('does not interact with the default pi ctx.ui', async () => {
+    const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
+    const healthResults = [
+      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
+      createHealthCheckResult({ modelId: 'requesty/model-b', ok: true }),
+    ]
+    const { mockedEnv } = configureMockedDependencies({ models, healthResults })
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const {
+      ctx,
+      capturedStatusLines,
+      capturedConfirmations,
+      capturedNotifications,
+      capturedUiOrder,
+      capturedStatuses,
+    } = createFakeCommandContext({
+      mode: 'print',
+    })
+
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
+
+    expect(capturedStatusLines).toEqual([])
+    expect(capturedConfirmations).toEqual([])
+    expect(capturedNotifications).toEqual([])
+    expect(capturedStatuses).toEqual([])
+    expect(capturedUiOrder).toEqual([])
+  })
+
+  it('reports evaluation errors', async () => {
+    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ discoverModelsError: new Error('bad day') })
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx } = createFakeCommandContext({
+      mode: 'print',
+    })
+    const consoleSpy = vi.spyOn(console, 'log')
+
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
+
+    expect(updateModelsJson).not.toHaveBeenCalled()
+    expect(consoleSpy.mock.calls).toMatchSnapshot()
+  })
+
+  it('complains about broken env', async () => {
+    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ getEnvError: new Error('bad day') })
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx } = createFakeCommandContext({
+      mode: 'print',
+    })
+    const consoleSpy = vi.spyOn(console, 'log')
+
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
+
+    expect(updateModelsJson).not.toHaveBeenCalled()
+    expect(consoleSpy.mock.calls).toMatchSnapshot()
   })
 })
 
@@ -504,10 +592,10 @@ describe('command handler ui wiring', () => {
     ])
   })
 
-  it('exits early outside tui mode', async () => {
+  it('runs silently outside tui mode', async () => {
     const models = [createModel({ id: 'requesty/model-a' })]
     const { discoverModels, updateModelsJson } = configureMockedDependencies({
-      healthCheckMode: 'off',
+      healthCheckMode: 'full',
       models,
     })
     const { command } = await loadExtension()
@@ -517,8 +605,8 @@ describe('command handler ui wiring', () => {
 
     await command.handler('', ctx)
 
-    expect(discoverModels).not.toHaveBeenCalled()
-    expect(updateModelsJson).not.toHaveBeenCalled()
+    expect(discoverModels).toHaveBeenCalled()
+    expect(updateModelsJson).toHaveBeenCalled()
     expect(capturedStatuses).toEqual([])
     expect(capturedNotifications).toEqual([])
     expect(capturedConfirmations).toEqual([])
@@ -790,12 +878,13 @@ function configureMockedDependencies(scenario: MockScenario = {}) {
   const models = scenario.models ?? [createModel({ id: 'requesty/model-a' })]
   const healthResults = scenario.healthResults ?? models.map(model => createHealthCheckResult({ modelId: model.id }))
 
-  const { updateModelsJson, formatModelsDiffSummary } = mockModelsModule(scenario)
+  const { updateModelsJson, formatModelsDiffSummary, getRequestyConfig } = mockModelsModule(scenario)
   const { discoverModels, fetchApiKeyInfo } = mockRequestyApiModule(scenario, models)
   const { formatHealthSummary, writeHealthCheckLog } = mockHealthCheckModule(healthResults)
   const mockedEnv = mockEnvModule(scenario)
 
   return {
+    getRequestyConfig,
     updateModelsJson,
     discoverModels,
     fetchApiKeyInfo,
@@ -811,10 +900,13 @@ function mockModelsModule(scenario: MockScenario) {
   if (scenario.getRequestyConfigError) {
     getRequestyConfig.mockThrow(scenario.getRequestyConfigError)
   } else {
-    getRequestyConfig.mockResolvedValue({
-      data: modelsJson,
-      provider,
-      existingModelIds: [],
+    getRequestyConfig.mockImplementation(async (apiKeyProvider, env) => {
+      const apiKey = await apiKeyProvider.getApiKey(env!.provider_id)
+      return {
+        data: modelsJson,
+        provider: { ...provider, apiKey: apiKey ?? 'not-found' },
+        existingModelIds: [],
+      }
     })
   }
 
@@ -823,7 +915,7 @@ function mockModelsModule(scenario: MockScenario) {
   diffModels.mockReturnValue(scenario.diff ?? { added: [], removed: [] })
   const formatModelsDiffSummary = vi.mocked(ModelsJsonModule.formatModelsDiffSummary)
   formatModelsDiffSummary.mockReturnValue('Models diff summary.')
-  return { updateModelsJson, formatModelsDiffSummary }
+  return { updateModelsJson, formatModelsDiffSummary, getRequestyConfig }
 }
 
 function mockRequestyApiModule(scenario: MockScenario, models: ProviderModelConfig[]) {

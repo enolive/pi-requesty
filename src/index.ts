@@ -86,13 +86,17 @@ export default function (pi: ExtensionAPI) {
 }
 
 export async function runDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
+  if (ctx.mode === 'tui') {
+    return runInteractiveDiscoveryWorkflow(ctx, env, args)
+  } else {
+    return runSilentDiscoveryWorkflow(ctx, env, args)
+  }
+}
+
+export async function runInteractiveDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
   const notifier = createUiNotifier(ctx)
   complainOnBrokenEnv(notifier, env)
   if (!env.ok) return
-  // Interactive TUI command; no print/json/rpc path.
-  if (ctx.mode !== 'tui') {
-    return
-  }
 
   const confirmer = createUiConfirmer(ctx)
   const apiProvider = createApiKeyProvider(ctx)
@@ -111,6 +115,26 @@ export async function runDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Tr
   }
 
   // Phases B + C: decide, optional write, final notify — outside the loader.
+  await finalizeDiscovery(evaluationResult.value, confirmer, notifier, env.value)
+}
+
+export async function runSilentDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
+  const notifier = createConsoleNotifier()
+  complainOnBrokenEnv(notifier, env)
+  if (!env.ok) return
+  const apiProvider = createApiKeyProvider(ctx)
+  const status = createConsoleStatusReporter()
+  const confirmer = createNoopConfirmer()
+
+  const evaluationResult: Try<DiscoveryEvaluation> = await runCatchingAsync(() =>
+    evaluateDiscovery(args, env.value, status, apiProvider),
+  )
+
+  if (!evaluationResult.ok) {
+    notifier.notify(formatDiscoveryFailure(evaluationResult.error), 'error')
+    return
+  }
+
   await finalizeDiscovery(evaluationResult.value, confirmer, notifier, env.value)
 }
 
@@ -296,6 +320,24 @@ function createLoaderStatusReporter(loader: RequestyStatusLoader): StatusReporte
   }
 }
 
+function createConsoleNotifier(): Notifier {
+  return {
+    notify: (message: string, _level: NotificationLevel) => console.log(`[${_level}] ${message}`),
+  }
+}
+
+function createConsoleStatusReporter(): StatusReporter {
+  return {
+    set: (message: string) => console.log(message),
+  }
+}
+
+function createNoopConfirmer(): Confirmer {
+  return {
+    confirm: () => Promise.resolve(true),
+  }
+}
+
 async function updateUsageStatus(ctx: ExtensionContext, env: Try<Env>): Promise<void> {
   if (!env.ok) return
   if (!ctx.hasUI) return // no footer to write to (print/json mode): skip the wasted fetch
@@ -372,6 +414,9 @@ function complainOnBrokenEnv(notifier: Notifier, env: Try<Env>) {
   }
 }
 
+/**
+ * minimal abstraction for getting an API key to not pollute anything outside index.ts with too many pi internals.
+ */
 function createApiKeyProvider(ctx: ExtensionContext): ApiKeyProvider {
   return {
     async getApiKey(providerId: string) {

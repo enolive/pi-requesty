@@ -94,6 +94,43 @@ exports[`discovery workflow > notifies full error on async rejections 1`] = `
 ]
 `;
 
+exports[`discovery workflow > runs in non-interactive mode 1`] = `
+[
+  [
+    "Discovering Requesty models...",
+  ],
+  [
+    "Checking models 0/2...",
+  ],
+  [
+    "Checking models 1/2...",
+  ],
+  [
+    "Checking models 2/2...",
+  ],
+  [
+    "[info] Discovered 2 Requesty model(s).
+Health check summary.
+Models diff summary.
+Full health check log: /tmp/pi-requesty-home/.pi/agent/requesty-health-check.log",
+  ],
+  [
+    "[info] Updated models.json. Run /reload to use the changes.",
+  ],
+]
+`;
+
+exports[`discovery workflow > runs in non-interactive mode reporting evaluation errors 1`] = `
+[
+  [
+    "Discovering Requesty models...",
+  ],
+  [
+    "[error] Discovery failed: bad day",
+  ],
+]
+`;
+
 exports[`discovery workflow > updates models.json and notifies info on no failures 1`] = `
 [
   {
@@ -123,6 +160,51 @@ Full health check log: /tmp/pi-requesty-home/.pi/agent/requesty-health-check.log
     "message": "requesty-discover: Updated models.json. Run /reload to use the changes.",
     "type": "info",
   },
+]
+`;
+
+exports[`non interactive discovery workflow > complains about broken env 1`] = `
+[
+  [
+    "[error] failed to load env: bad day",
+  ],
+]
+`;
+
+exports[`non interactive discovery workflow > reports evaluation errors 1`] = `
+[
+  [
+    "Discovering Requesty models...",
+  ],
+  [
+    "[error] Discovery failed: bad day",
+  ],
+]
+`;
+
+exports[`non interactive discovery workflow > runs when mode is not tui 1`] = `
+[
+  [
+    "Discovering Requesty models...",
+  ],
+  [
+    "Checking models 0/2...",
+  ],
+  [
+    "Checking models 1/2...",
+  ],
+  [
+    "Checking models 2/2...",
+  ],
+  [
+    "[info] Discovered 2 Requesty model(s).
+Health check summary.
+Models diff summary.
+Full health check log: /tmp/pi-requesty-home/.pi/agent/requesty-health-check.log",
+  ],
+  [
+    "[info] Updated models.json. Run /reload to use the changes.",
+  ],
 ]
 `;
 

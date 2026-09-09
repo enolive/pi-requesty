@@ -50,6 +50,7 @@ type FakeCommandContextOptions = {
   modelProvider?: string
   /** Whether a UI/footer is available (ctx.hasUI). Defaults to true; set false for print/json mode. */
   hasUI?: boolean
+  knownApiKeys?: Record<string, string>
 }
 
 export function createFakeCommandContext(options: FakeCommandContextOptions = {}) {
@@ -127,7 +128,7 @@ export function createFakeCommandContext(options: FakeCommandContextOptions = {}
         capturedStatusLines.push({ key, text })
       },
     },
-    modelRegistry: createModelRegistry(),
+    modelRegistry: createModelRegistry(options.knownApiKeys ?? {}),
   } as unknown as ExtensionCommandContext
 
   return {
@@ -141,9 +142,9 @@ export function createFakeCommandContext(options: FakeCommandContextOptions = {}
   }
 }
 
-export function createModelRegistry(apiKey: string | null = 'test-api-key'): ModelRegistry {
+function createModelRegistry(providerKeys: Record<string, string>): ModelRegistry {
   return {
-    getApiKeyForProvider: () => Promise.resolve(apiKey ?? undefined),
+    getApiKeyForProvider: (providerId: string) => Promise.resolve(providerKeys[providerId]),
   } as unknown as ModelRegistry
 }
 
