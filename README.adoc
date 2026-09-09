@@ -140,14 +140,14 @@ The extension shows your current Requesty monthly spend as a persistent line in 
 
 [source,text]
 ----
-Requesty Usage (<API Key Name>): $63.55/$150.00 (42%)
+<API Key Name>: $63.55/$150.00 (42%)
 ----
 
 When your API key has no monthly limit (`monthly_limit` is `0`), the limit is treated as unlimited:
 
 [source,text]
 ----
-Requesty Usage (<API Key Name>): $63.55 (unlimited)
+<API Key Name>: $63.55 (unlimited)
 ----
 
 When you select a model from a provider other than `REQUESTY_PROVIDER_ID`, the status is cleared — there is no Requesty usage to show for it. If `REQUESTY_API_KEY` is not configured, the status is left untouched.
