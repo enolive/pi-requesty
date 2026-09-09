@@ -1,0 +1,21 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`getArgumentCompletions > returns dry-run option for empty prefix 1`] = `
+[
+  {
+    "description": "Preview discovery without offering to write models.json",
+    "label": "--dry-run",
+    "value": "--dry-run",
+  },
+]
+`;
+
+exports[`getArgumentCompletions > returns dry-run option for matching prefix 1`] = `
+[
+  {
+    "description": "Preview discovery without offering to write models.json",
+    "label": "--dry-run",
+    "value": "--dry-run",
+  },
+]
+`;

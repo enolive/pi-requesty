@@ -1,17 +1,24 @@
-import type { ProviderModelConfig, RegisteredCommand } from '@earendil-works/pi-coding-agent'
+import type { RegisteredCommand } from '@earendil-works/pi-coding-agent'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { HealthCheckResult, Provider } from './health-check'
-import * as HealthCheckModule from './health-check'
 import type { ApiKeyInfo } from './requesty-api'
+import type { RequestyStatusLoader } from './ui/requesty-status-loader.ts'
 import * as RequestyApiModule from './requesty-api'
 import * as ModelsJsonModule from './models-json'
 import * as EnvModule from './env'
 import { Env } from './env'
+import * as DiscoveryModule from './discovery'
+import type { DiscoveryEvaluation, Try } from './discovery'
 import { createFakeCommandContext, createFakePi, fireEvent } from '../test/helpers/fake-pi'
-import { shuffleCompareFn } from '../test/helpers/shuffle.ts'
-import { resetUsageStatusCache, Try } from './index.ts'
+import { resetUsageStatusCache } from './index.ts'
 
-vi.mock('./health-check')
+vi.mock('./discovery', async importOriginal => {
+  const actual = await importOriginal<typeof import('./discovery')>()
+  return {
+    ...actual,
+    evaluateDiscovery: vi.fn(),
+    finalizeDiscovery: vi.fn(),
+  }
+})
 vi.mock('./models-json')
 vi.mock('./requesty-api')
 vi.mock('./env', async importOriginal => {
@@ -23,18 +30,6 @@ const COMMAND_NAME = 'requesty-discover'
 const REQUESTY_PROVIDER_ID = EnvModule.DEFAULT_PROVIDER_ID
 
 type TestCommand = Omit<RegisteredCommand, 'name' | 'sourceInfo'>
-type HealthCheckMode = 'off' | 'basic' | 'full'
-
-type MockScenario = {
-  healthCheckMode?: HealthCheckMode
-  models?: ProviderModelConfig[]
-  healthResults?: HealthCheckResult[]
-  getRequestyConfigError?: unknown
-  discoverModelsError?: unknown
-  getEnvError?: unknown
-  fetchApiUsageResults?: Promise<ApiKeyInfo>[]
-  diff?: ModelsJsonModule.ModelsDiff
-}
 
 const MODELS_JSON_PATH = '/tmp/pi-requesty-home/.pi/agent/models.json'
 const HEALTH_CHECK_LOG_PATH = '/tmp/pi-requesty-home/.pi/agent/requesty-health-check.log'
@@ -43,21 +38,12 @@ const provider = {
   name: 'Requesty',
   baseUrl: 'https://router.requesty.ai/v1',
   apiKey: 'test-key',
-} satisfies Provider & { name: string }
-
-const modelsJson = {
-  providers: {
-    [REQUESTY_PROVIDER_ID]: {
-      name: 'Requesty',
-      baseUrl: 'https://router.requesty.ai/v1',
-      apiKey: 'test-key',
-      models: [],
-    },
-  },
 }
 
 describe('extension registration', () => {
   it('registers requesty sync command', async () => {
+    mockEnv()
+
     const { command } = await loadExtension()
 
     expect(command.description).toBe(
@@ -66,603 +52,243 @@ describe('extension registration', () => {
     expect(command.getArgumentCompletions).toBeTypeOf('function')
     expect(command.handler).toBeTypeOf('function')
   })
-})
 
-describe('argument completions', () => {
-  it('returns dry-run option for empty prefix', async () => {
-    const { command } = await loadExtension()
+  it('registers all expected event handlers', async () => {
+    mockEnv()
 
-    const completions = await getArgumentCompletions(command, '')
+    const { eventHandlers } = await loadExtension()
 
-    expect(completions).toMatchSnapshot()
+    expect(eventHandlers.get('session_start')).toBeTypeOf('function')
+    expect(eventHandlers.get('turn_end')).toBeTypeOf('function')
+    expect(eventHandlers.get('model_select')).toBeTypeOf('function')
   })
 
-  it('returns dry-run option for matching prefix', async () => {
+  it('command handler delegates to runDiscoveryWorkflow', async () => {
+    const mockedEnv = mockOkEnv()
+    const evaluation = createEvaluation()
+    vi.mocked(DiscoveryModule.evaluateDiscovery).mockResolvedValue(evaluation)
+    vi.mocked(DiscoveryModule.finalizeDiscovery).mockResolvedValue(undefined)
+    const { command } = await loadExtension()
+    const { ctx } = createFakeCommandContext()
+
+    await command.handler('--dry-run', ctx)
+
+    expect(DiscoveryModule.evaluateDiscovery).toHaveBeenCalledWith(
+      '--dry-run',
+      mockedEnv.value,
+      expect.any(Object),
+      expect.any(Object),
+    )
+    expect(DiscoveryModule.finalizeDiscovery).toHaveBeenCalledWith(
+      evaluation,
+      expect.any(Object),
+      expect.any(Object),
+      mockedEnv.value,
+    )
+  })
+})
+
+describe('argument completions wiring', () => {
+  it('delegates to discovery.getArgumentCompletions', async () => {
+    mockEnv()
     const { command } = await loadExtension()
 
     const completions = await getArgumentCompletions(command, '--d')
 
-    expect(completions).toMatchSnapshot()
-  })
-
-  it('returns empty list for unrelated prefix', async () => {
-    const { command } = await loadExtension()
-
-    const completions = await getArgumentCompletions(command, '--wat')
-
-    expect(completions).toEqual([])
+    expect(completions).toEqual([expect.objectContaining({ value: '--dry-run' })])
   })
 })
 
-describe('discovery workflow', () => {
-  it('does nothing when env load fails', async () => {
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ getEnvError: new Error('env load failed') })
+describe('runDiscoveryWorkflow mode dispatch', () => {
+  it('runs interactively (ctx.ui) in tui mode: notify, evaluate, finalize', async () => {
+    const mockedEnv = mockOkEnv()
+    const evaluation = createEvaluation()
+    vi.mocked(DiscoveryModule.evaluateDiscovery).mockResolvedValue(evaluation)
+    vi.mocked(DiscoveryModule.finalizeDiscovery).mockResolvedValue(undefined)
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx } = createFakeCommandContext({
+      confirmResult: true,
+      knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' },
+    })
+
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
+
+    expect(DiscoveryModule.evaluateDiscovery).toHaveBeenCalled()
+    expect(DiscoveryModule.finalizeDiscovery).toHaveBeenCalled()
+    const [args, envArg, , apiKeyProvider] = vi.mocked(DiscoveryModule.evaluateDiscovery).mock.calls[0]
+    expect(args).toBe('')
+    expect(envArg).toBe(mockedEnv.value)
+    await expect(apiKeyProvider.getApiKey(REQUESTY_PROVIDER_ID)).resolves.toBe('my-api-key')
+    const [evaluationArg, , , finalizeEnvArg] = vi.mocked(DiscoveryModule.finalizeDiscovery).mock.calls[0]
+    expect(evaluationArg).toBe(evaluation)
+    expect(finalizeEnvArg).toBe(mockedEnv.value)
+  })
+
+  it('runs silently (console) outside tui mode: no ctx.ui interaction', async () => {
+    const mockedEnv = mockOkEnv()
+    const evaluation = createEvaluation()
+    vi.mocked(DiscoveryModule.evaluateDiscovery).mockResolvedValue(evaluation)
+    vi.mocked(DiscoveryModule.finalizeDiscovery).mockResolvedValue(undefined)
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx, capturedConfirmations, capturedNotifications, capturedStatuses } = createFakeCommandContext({
+      mode: 'print',
+      knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' },
+    })
+
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
+
+    expect(capturedConfirmations).toEqual([])
+    expect(capturedNotifications).toEqual([])
+    expect(capturedStatuses).toEqual([])
+    expect(DiscoveryModule.evaluateDiscovery).toHaveBeenCalled()
+    expect(DiscoveryModule.finalizeDiscovery).toHaveBeenCalled()
+    const [, , , apiKeyProvider] = vi.mocked(DiscoveryModule.evaluateDiscovery).mock.calls[0]
+    await expect(apiKeyProvider.getApiKey(REQUESTY_PROVIDER_ID)).resolves.toBe('my-api-key')
+  })
+
+  it('does not evaluate or finalize when env failed to load (interactive)', async () => {
+    const mockedEnv = mockEnv(new Error('env load failed'))
     const { runDiscoveryWorkflow } = await loadExtension()
     const { ctx, capturedNotifications } = createFakeCommandContext()
 
-    await runDiscoveryWorkflow(ctx, mockedEnv, '--dry-run')
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
 
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(capturedNotifications).toMatchSnapshot()
+    expect(DiscoveryModule.evaluateDiscovery).not.toHaveBeenCalled()
+    expect(DiscoveryModule.finalizeDiscovery).not.toHaveBeenCalled()
+    expect(capturedNotifications).toEqual([
+      { message: `${COMMAND_NAME}: failed to load env: env load failed`, type: 'error' },
+    ])
   })
 
-  it('emits notification and does not update models.json on dry-run', async () => {
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ healthCheckMode: 'off' })
+  it('does not evaluate or finalize when env failed to load (silent)', async () => {
+    const mockedEnv = mockEnv(new Error('env load failed'))
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx } = createFakeCommandContext({ mode: 'print' })
+    const consoleSpy = vi.spyOn(console, 'log')
+
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
+
+    expect(DiscoveryModule.evaluateDiscovery).not.toHaveBeenCalled()
+    expect(DiscoveryModule.finalizeDiscovery).not.toHaveBeenCalled()
+    expect(consoleSpy).toHaveBeenCalledWith('[error] failed to load env: env load failed')
+  })
+
+  it('notifies "Discovery failed" and does not finalize when evaluation rejects (interactive)', async () => {
+    const mockedEnv = mockEnv()
+    vi.mocked(DiscoveryModule.evaluateDiscovery).mockRejectedValue(new Error('models.json exploded'))
     const { runDiscoveryWorkflow } = await loadExtension()
     const { ctx, capturedNotifications } = createFakeCommandContext()
 
-    await runDiscoveryWorkflow(ctx, mockedEnv, '--dry-run')
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
 
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(capturedNotifications).toMatchSnapshot()
+    expect(DiscoveryModule.finalizeDiscovery).not.toHaveBeenCalled()
+    expect(capturedNotifications).toEqual([
+      { message: `${COMMAND_NAME}: Discovery failed: models.json exploded`, type: 'error' },
+    ])
   })
 
-  it('uses apiKey from models registry', async () => {
-    const { mockedEnv, discoverModels } = configureMockedDependencies()
+  it('notifies "Discovery failed" and does not finalize when evaluation rejects (silent)', async () => {
+    const mockedEnv = mockEnv()
+    vi.mocked(DiscoveryModule.evaluateDiscovery).mockRejectedValue(new Error('bad day'))
     const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx } = createFakeCommandContext({ mode: 'print' })
+    const consoleSpy = vi.spyOn(console, 'log')
+
+    await runDiscoveryWorkflow(ctx, mockedEnv, '')
+
+    expect(DiscoveryModule.finalizeDiscovery).not.toHaveBeenCalled()
+    expect(consoleSpy).toHaveBeenCalledWith('[error] Discovery failed: bad day')
+  })
+})
+
+describe('ui adapter factories', () => {
+  it('createUiNotifier prefixes messages and delegates to ctx.ui.notify', async () => {
+    mockEnv()
+    const { createUiNotifier } = await loadExtension()
+    const { ctx, capturedNotifications } = createFakeCommandContext()
+
+    createUiNotifier(ctx).notify('hello', 'info')
+
+    expect(capturedNotifications).toEqual([{ message: `${COMMAND_NAME}: hello`, type: 'info' }])
+  })
+
+  it('createUiConfirmer delegates to ctx.ui.confirm', async () => {
+    mockEnv()
+    const { createUiConfirmer } = await loadExtension()
+    const { ctx, capturedConfirmations } = createFakeCommandContext({ confirmResult: true })
+
+    await expect(createUiConfirmer(ctx).confirm('title', 'message')).resolves.toBe(true)
+
+    expect(capturedConfirmations).toEqual([{ title: 'title', message: 'message' }])
+  })
+
+  it('createLoaderStatusReporter delegates to loader.setMessage', async () => {
+    mockEnv()
+    const { createLoaderStatusReporter } = await loadExtension()
+    const setMessage = vi.fn()
+    const fakeLoader = { setMessage } as unknown as RequestyStatusLoader
+
+    createLoaderStatusReporter(fakeLoader).set('Discovering Requesty models...')
+
+    expect(setMessage).toHaveBeenCalledWith('Discovering Requesty models...')
+  })
+
+  it('createConsoleNotifier logs level-prefixed messages', async () => {
+    mockEnv()
+    const { createConsoleNotifier } = await loadExtension()
+    const consoleSpy = vi.spyOn(console, 'log')
+
+    createConsoleNotifier().notify('hello', 'warning')
+
+    expect(consoleSpy).toHaveBeenCalledWith('[warning] hello')
+  })
+
+  it('createConsoleStatusReporter logs the message as-is', async () => {
+    mockEnv()
+    const { createConsoleStatusReporter } = await loadExtension()
+    const consoleSpy = vi.spyOn(console, 'log')
+
+    createConsoleStatusReporter().set('Discovering Requesty models...')
+
+    expect(consoleSpy).toHaveBeenCalledWith('Discovering Requesty models...')
+  })
+
+  it('createNoopConfirmer always confirms', async () => {
+    mockEnv()
+    const { createNoopConfirmer } = await loadExtension()
+
+    await expect(createNoopConfirmer().confirm('title', 'message')).resolves.toBe(true)
+  })
+
+  it('createApiKeyProvider delegates to ctx.modelRegistry.getApiKeyForProvider', async () => {
+    mockEnv()
+    const { createApiKeyProvider } = await loadExtension()
     const { ctx } = createFakeCommandContext({ knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' } })
-    const expectedProvider = { ...provider, apiKey: 'my-api-key' }
 
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(discoverModels).toHaveBeenCalledWith(expectedProvider)
-  })
-
-  it('updates models.json and notifies info on no failures', async () => {
-    const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
-    const healthResults = [
-      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/model-b', ok: true }),
-    ]
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ models, healthResults })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(updateModelsJson).toHaveBeenCalledWith(modelsJson, models, expect.any(Object))
-    expect(capturedNotifications).toMatchSnapshot()
-  })
-
-  it('updates passing models and notifies warning on partial failures', async () => {
-    const passingModel = createModel({ id: 'requesty/passing-model' })
-    const failingModel = createModel({ id: 'requesty/failing-model' })
-    const healthResults = [
-      createHealthCheckResult({ modelId: 'requesty/passing-model', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/failing-model', ok: false }),
-    ]
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({
-      models: [passingModel, failingModel],
-      healthResults,
-    })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(updateModelsJson).toHaveBeenCalledWith(modelsJson, [passingModel], expect.any(Object))
-    expect(capturedNotifications).toMatchSnapshot()
-  })
-
-  it('sorts failing models deterministically for logging', async () => {
-    const failingModel1 = createModel({ id: 'requesty/failing-model-1' })
-    const failingModel2 = createModel({ id: 'requesty/failing-model-2' })
-    const failingModel3 = createModel({ id: 'requesty/failing-model-3' })
-    const shuffledHealthResults = [
-      createHealthCheckResult({ modelId: 'requesty/failing-model-1', ok: false }),
-      createHealthCheckResult({ modelId: 'requesty/failing-model-2', ok: false }),
-      createHealthCheckResult({ modelId: 'requesty/failing-model-3', ok: false }),
-    ].toSorted(shuffleCompareFn)
-    const { formatHealthSummary, writeHealthCheckLog, mockedEnv } = configureMockedDependencies({
-      models: [failingModel1, failingModel2, failingModel3],
-      healthResults: shuffledHealthResults,
-    })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    const modelId = (healthCheck: HealthCheckResult) => healthCheck.modelId
-    const [summaryHealthChecks] = formatHealthSummary.mock.calls[0]
-    const summaryModelIds = summaryHealthChecks.map(modelId)
-    expect(summaryModelIds).toEqual([
-      'requesty/failing-model-1',
-      'requesty/failing-model-2',
-      'requesty/failing-model-3',
-    ])
-    const [, logHealthChecks] = writeHealthCheckLog.mock.calls[0]
-    const logSummaryModelIds = logHealthChecks.map(modelId)
-    expect(logSummaryModelIds).toEqual(summaryModelIds)
-  })
-
-  it('sorts passing models deterministically for updating the models.json', async () => {
-    const passingModel1 = createModel({ id: 'requesty/passing-model-1' })
-    const passingModel2 = createModel({ id: 'requesty/passing-model-2' })
-    const passingModel3 = createModel({ id: 'requesty/passing-model-3' })
-    const shuffledHealthResults = [
-      createHealthCheckResult({ modelId: 'requesty/passing-model-1', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/passing-model-2', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/passing-model-3', ok: true }),
-    ].toSorted(shuffleCompareFn)
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({
-      models: [passingModel1, passingModel2, passingModel3],
-      healthResults: shuffledHealthResults,
-    })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    const [, passingModels] = updateModelsJson.mock.calls[0]
-    const passingModelIds = passingModels.map(model => model.id)
-    expect(passingModelIds).toEqual([
-      'requesty/passing-model-1',
-      'requesty/passing-model-2',
-      'requesty/passing-model-3',
-    ])
-  })
-
-  it('does not update models.json and notifies error on full error', async () => {
-    const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
-    const healthResults = [
-      createHealthCheckResult({ modelId: 'requesty/model-a', ok: false }),
-      createHealthCheckResult({ modelId: 'requesty/model-b', ok: false }),
-    ]
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ models, healthResults })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(capturedNotifications).toMatchSnapshot()
-  })
-
-  it('notifies full error and clears status', async () => {
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({
-      getRequestyConfigError: new Error('models.json exploded'),
-    })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(capturedNotifications).toMatchSnapshot()
-  })
-
-  it('notifies full error for sth not deriving from Error', async () => {
-    const { mockedEnv } = configureMockedDependencies({
-      getRequestyConfigError: 'this is not an error',
-    })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(capturedNotifications).toMatchSnapshot()
-  })
-
-  it('notifies full error on async rejections', async () => {
-    const { mockedEnv } = configureMockedDependencies({
-      discoverModelsError: new Error('requesty has a bad day trying to read its models'),
-    })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(capturedNotifications).toMatchSnapshot()
-  })
-
-  it('includes the model diff summary in the notification', async () => {
-    const diff = { added: ['requesty/model-new'], removed: ['requesty/model-old'] }
-    const { formatModelsDiffSummary, mockedEnv } = configureMockedDependencies({ diff })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(formatModelsDiffSummary).toHaveBeenCalledWith(diff)
-    expect(capturedNotifications[0].message).toContain('Models diff summary.')
-  })
-
-  it('includes the model diff summary even when health checks are off', async () => {
-    const diff = { added: ['requesty/model-new'], removed: [] }
-    const { formatModelsDiffSummary, mockedEnv } = configureMockedDependencies({ healthCheckMode: 'off', diff })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(formatModelsDiffSummary).toHaveBeenCalledWith(diff)
-    expect(capturedNotifications[0].message).toContain('Models diff summary.')
-  })
-
-  it('reports progress while checking models', async () => {
-    const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
-    const { mockedEnv } = configureMockedDependencies({ models })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedStatuses } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(capturedStatuses).toEqual([
-      'Discovering Requesty models...',
-      'Checking models 0/2...',
-      'Checking models 1/2...',
-      'Checking models 2/2...',
-    ])
+    await expect(createApiKeyProvider(ctx).getApiKey(REQUESTY_PROVIDER_ID)).resolves.toBe('my-api-key')
   })
 })
 
-describe('non interactive discovery workflow', () => {
-  it('runs when mode is not tui', async () => {
-    const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
-    const healthResults = [
-      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/model-b', ok: true }),
-    ]
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ models, healthResults })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx } = createFakeCommandContext({
-      mode: 'print',
+describe('ui adapters passed to discovery (silent mode)', () => {
+  it('console notifier and status reporter are used outside tui mode', async () => {
+    const mockedEnv = mockEnv()
+    vi.mocked(DiscoveryModule.evaluateDiscovery).mockImplementation(async (_args, _env, status) => {
+      status.set('Discovering Requesty models...')
+      await Promise.resolve()
+      return createEvaluation()
     })
+    vi.mocked(DiscoveryModule.finalizeDiscovery).mockImplementation(async (_evaluation, confirmer, notifier) => {
+      const confirmed = await confirmer.confirm('title', 'message')
+      notifier.notify(`confirmed: ${confirmed}`, 'info')
+    })
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx } = createFakeCommandContext({ mode: 'print' })
     const consoleSpy = vi.spyOn(console, 'log')
 
     await runDiscoveryWorkflow(ctx, mockedEnv, '')
 
-    expect(updateModelsJson).toHaveBeenCalledWith(modelsJson, models, expect.any(Object))
-    expect(consoleSpy.mock.calls).toMatchSnapshot()
-  })
-
-  it('does not interact with the default pi ctx.ui', async () => {
-    const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
-    const healthResults = [
-      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/model-b', ok: true }),
-    ]
-    const { mockedEnv } = configureMockedDependencies({ models, healthResults })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const {
-      ctx,
-      capturedStatusLines,
-      capturedConfirmations,
-      capturedNotifications,
-      capturedUiOrder,
-      capturedStatuses,
-    } = createFakeCommandContext({
-      mode: 'print',
-    })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(capturedStatusLines).toEqual([])
-    expect(capturedConfirmations).toEqual([])
-    expect(capturedNotifications).toEqual([])
-    expect(capturedStatuses).toEqual([])
-    expect(capturedUiOrder).toEqual([])
-  })
-
-  it('reports evaluation errors', async () => {
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ discoverModelsError: new Error('bad day') })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx } = createFakeCommandContext({
-      mode: 'print',
-    })
-    const consoleSpy = vi.spyOn(console, 'log')
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(consoleSpy.mock.calls).toMatchSnapshot()
-  })
-
-  it('complains about broken env', async () => {
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ getEnvError: new Error('bad day') })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx } = createFakeCommandContext({
-      mode: 'print',
-    })
-    const consoleSpy = vi.spyOn(console, 'log')
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(consoleSpy.mock.calls).toMatchSnapshot()
-  })
-})
-
-describe('confirm-to-write', () => {
-  describe('presents summary, then asks for confirmation, then presents final message for', () => {
-    it.each([true, false])('confirmation: %s', async confirmResult => {
-      const models = [createModel({ id: 'requesty/model-a' })]
-      const { mockedEnv } = configureMockedDependencies({ healthCheckMode: 'off', models })
-      const { runDiscoveryWorkflow } = await loadExtension()
-      const { ctx, capturedUiOrder } = createFakeCommandContext({ confirmResult })
-
-      await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-      expect(capturedUiOrder).toEqual(['notify', 'confirm', 'notify'])
-    })
-  })
-
-  it('asks for confirmation before updating models.json', async () => {
-    const models = [createModel({ id: 'requesty/model-a' })]
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ healthCheckMode: 'off', models })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx } = createFakeCommandContext({ confirmResult: true })
-    const confirmSpy = vi.spyOn(ctx.ui, 'confirm')
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(updateModelsJson).toHaveBeenCalledOnce()
-    expect(confirmSpy).toHaveBeenCalledOnce()
-    expect(confirmSpy.mock.invocationCallOrder[0]).toBeLessThan(updateModelsJson.mock.invocationCallOrder[0])
-  })
-
-  it('does not update models.json when confirmation is declined', async () => {
-    const models = [createModel({ id: 'requesty/model-a' })]
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ healthCheckMode: 'off', models })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications } = createFakeCommandContext({ confirmResult: false })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(capturedNotifications).toMatchSnapshot()
-  })
-
-  it('still confirms when the model id diff is empty', async () => {
-    const models = [createModel({ id: 'requesty/model-a' })]
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({
-      healthCheckMode: 'off',
-      models,
-      diff: { added: [], removed: [] },
-    })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications, capturedConfirmations } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(capturedConfirmations).toHaveLength(1)
-    expect(capturedNotifications[0]?.message).toEqual(
-      [`${COMMAND_NAME}: Discovered 1 Requesty model(s).`, 'Models diff summary.'].join('\n'),
-    )
-    expect(capturedConfirmations[0]).toEqual({
-      title: 'Refresh models.json?',
-      message: 'No model ID changes. Rewrite the file to refresh metadata anyway?',
-    })
-    expect(updateModelsJson).toHaveBeenCalledTimes(1)
-    expect(capturedNotifications.at(-1)).toEqual({
-      message: `${COMMAND_NAME}: Updated models.json. Run /reload to use the changes.`,
-      type: 'info',
-    })
-  })
-
-  it('does not ask for confirmation on dry-run', async () => {
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ healthCheckMode: 'off' })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedConfirmations } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '--dry-run')
-
-    expect(capturedConfirmations).toHaveLength(0)
-    expect(updateModelsJson).not.toHaveBeenCalled()
-  })
-
-  it('does not ask for confirmation when there are no passing models', async () => {
-    const models = [createModel({ id: 'requesty/model-a' })]
-    const healthResults = [createHealthCheckResult({ modelId: 'requesty/model-a', ok: false })]
-    const { updateModelsJson, mockedEnv } = configureMockedDependencies({ models, healthResults })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedConfirmations } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(capturedConfirmations).toHaveLength(0)
-    expect(updateModelsJson).not.toHaveBeenCalled()
-  })
-
-  it('notifies discovery summary before a short confirmation prompt', async () => {
-    const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
-    const diff = { added: ['requesty/model-new'], removed: ['requesty/model-old'] }
-    const { mockedEnv } = configureMockedDependencies({ healthCheckMode: 'off', models, diff })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications, capturedConfirmations } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(capturedNotifications[0]?.message).toEqual(
-      [`${COMMAND_NAME}: Discovered 2 Requesty model(s).`, 'Models diff summary.'].join('\n'),
-    )
-    expect(capturedConfirmations).toEqual([
-      {
-        title: 'Write 2 model(s)?',
-        message: 'Update models.json with the discovery result above.',
-      },
-    ])
-    expect(capturedNotifications.at(-1)).toEqual({
-      message: `${COMMAND_NAME}: Updated models.json. Run /reload to use the changes.`,
-      type: 'info',
-    })
-  })
-
-  it('notifies health-check context before confirmation', async () => {
-    const models = [createModel({ id: 'requesty/model-a' })]
-    const diff = { added: ['requesty/model-a'], removed: [] }
-    const { mockedEnv } = configureMockedDependencies({ models, diff })
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedNotifications, capturedConfirmations } = createFakeCommandContext({ confirmResult: true })
-
-    await runDiscoveryWorkflow(ctx, mockedEnv, '')
-
-    expect(capturedNotifications[0]?.message).toEqual(
-      [
-        `${COMMAND_NAME}: Discovered 1 Requesty model(s).`,
-        'Health check summary.',
-        'Models diff summary.',
-        `Full health check log: ${HEALTH_CHECK_LOG_PATH}`,
-      ].join('\n'),
-    )
-    expect(capturedConfirmations).toEqual([
-      {
-        title: 'Write 1 model(s)?',
-        message: 'Update models.json with the discovery result above.',
-      },
-    ])
-  })
-})
-
-describe('command handler ui wiring', () => {
-  it('notifies Discovery failed for Error throws during evaluation', async () => {
-    const { updateModelsJson } = configureMockedDependencies({
-      getRequestyConfigError: new Error('models.json exploded'),
-    })
-    const { command } = await loadExtension()
-    const { ctx, capturedNotifications, capturedConfirmations } = createFakeCommandContext()
-
-    await command.handler('', ctx)
-
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(capturedConfirmations).toEqual([])
-    expect(capturedNotifications).toEqual([
-      {
-        message: `${COMMAND_NAME}: Discovery failed: models.json exploded`,
-        type: 'error',
-      },
-    ])
-  })
-
-  it('notifies Discovery failed for non-Error throws during evaluation', async () => {
-    const { updateModelsJson } = configureMockedDependencies({
-      getRequestyConfigError: 'this is not an error',
-    })
-    const { command } = await loadExtension()
-    const { ctx, capturedNotifications, capturedConfirmations } = createFakeCommandContext()
-
-    await command.handler('', ctx)
-
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(capturedConfirmations).toEqual([])
-    expect(capturedNotifications).toEqual([
-      {
-        message: `${COMMAND_NAME}: Discovery failed: this is not an error`,
-        type: 'error',
-      },
-    ])
-  })
-
-  it('notifies Discovery failed for async rejections during evaluation', async () => {
-    const { updateModelsJson } = configureMockedDependencies({
-      discoverModelsError: new Error('requesty has a bad day trying to read its models'),
-    })
-    const { command } = await loadExtension()
-    const { ctx, capturedNotifications, capturedConfirmations } = createFakeCommandContext()
-
-    await command.handler('', ctx)
-
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(capturedConfirmations).toEqual([])
-    expect(capturedNotifications).toEqual([
-      {
-        message: `${COMMAND_NAME}: Discovery failed: requesty has a bad day trying to read its models`,
-        type: 'error',
-      },
-    ])
-  })
-
-  it('runs silently outside tui mode', async () => {
-    const models = [createModel({ id: 'requesty/model-a' })]
-    const { discoverModels, updateModelsJson } = configureMockedDependencies({
-      healthCheckMode: 'full',
-      models,
-    })
-    const { command } = await loadExtension()
-    const { ctx, capturedStatuses, capturedNotifications, capturedConfirmations } = createFakeCommandContext({
-      mode: 'print',
-    })
-
-    await command.handler('', ctx)
-
-    expect(discoverModels).toHaveBeenCalled()
-    expect(updateModelsJson).toHaveBeenCalled()
-    expect(capturedStatuses).toEqual([])
-    expect(capturedNotifications).toEqual([])
-    expect(capturedConfirmations).toEqual([])
-  })
-
-  it('uses the loader status reporter', async () => {
-    const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
-    configureMockedDependencies({ models })
-    const { command } = await loadExtension()
-    const { ctx, capturedStatuses, capturedNotifications } = createFakeCommandContext()
-
-    await command.handler('', ctx)
-
-    expect(capturedNotifications).toHaveLength(2)
-    expect(capturedNotifications[0]?.type).toBe('info')
-    expect(capturedNotifications[0]?.message).toContain(`${COMMAND_NAME}: Discovered 2 Requesty model(s).`)
-    expect(capturedNotifications[1]).toEqual({
-      type: 'info',
-      message: `${COMMAND_NAME}: Updated models.json. Run /reload to use the changes.`,
-    })
-    expect(capturedStatuses).toEqual([
-      'Discovering Requesty models...',
-      'Checking models 0/2...',
-      'Checking models 1/2...',
-      'Checking models 2/2...',
-    ])
-  })
-
-  it('uses ui.confirm before writing', async () => {
-    const models = [createModel({ id: 'requesty/model-a' })]
-    const { updateModelsJson } = configureMockedDependencies({ healthCheckMode: 'off', models })
-    const { command } = await loadExtension()
-    const { ctx, capturedConfirmations } = createFakeCommandContext({ confirmResult: true })
-
-    await command.handler('', ctx)
-
-    expect(capturedConfirmations).toHaveLength(1)
-    expect(updateModelsJson).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not write when ui.confirm is declined', async () => {
-    const models = [createModel({ id: 'requesty/model-a' })]
-    const { updateModelsJson } = configureMockedDependencies({ healthCheckMode: 'off', models })
-    const { command } = await loadExtension()
-    const { ctx, capturedConfirmations, capturedNotifications } = createFakeCommandContext({
-      confirmResult: false,
-    })
-
-    await command.handler('', ctx)
-
-    expect(capturedConfirmations).toHaveLength(1)
-    expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(capturedNotifications.at(-1)).toEqual({
-      type: 'info',
-      message: `${COMMAND_NAME}: Left models.json unchanged.`,
-    })
+    expect(consoleSpy).toHaveBeenCalledWith('Discovering Requesty models...')
+    expect(consoleSpy).toHaveBeenCalledWith('[info] confirmed: true')
   })
 })
 
@@ -710,20 +336,30 @@ describe('usage status', () => {
     resetUsageStatusCache()
   })
 
-  it('registers all expected event handlers', async () => {
-    configureMockedDependencies()
-    const { eventHandlers } = await loadExtension()
-
-    expect(eventHandlers.get('session_start')).toBeTypeOf('function')
-    expect(eventHandlers.get('turn_end')).toBeTypeOf('function')
-    expect(eventHandlers.get('model_select')).toBeTypeOf('function')
-  })
+  function mockUsageDependencies(fetchApiUsageResults?: Promise<ApiKeyInfo>[]) {
+    const getRequestyConfig = vi.mocked(ModelsJsonModule.getRequestyConfig)
+    getRequestyConfig.mockResolvedValue({
+      data: { providers: {} },
+      provider,
+      existingModelIds: [],
+    })
+    const fetchApiUsage = vi.mocked(RequestyApiModule.fetchApiUsage)
+    fetchApiUsage.mockReset()
+    if (fetchApiUsageResults) {
+      for (const result of fetchApiUsageResults) {
+        fetchApiUsage.mockReturnValueOnce(result)
+      }
+    } else {
+      fetchApiUsage.mockResolvedValue({ name: 'Playground', monthlySpend: 0, monthlyLimit: 0 })
+    }
+    return { fetchApiUsage }
+  }
 
   describe('sets the usage status line', () => {
     it.each(events)('on %s', async eventName => {
+      mockEnv()
       const apiKeyInfo: ApiKeyInfo = { name: 'Playground', monthlySpend: 63.55, monthlyLimit: 150 }
-      const fetchUsage = createResolved(apiKeyInfo)
-      configureMockedDependencies({ fetchApiUsageResults: [fetchUsage] })
+      mockUsageDependencies([Promise.resolve(apiKeyInfo)])
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
       const { ctx, capturedStatusLines, waitForStatusLines } = createFakeCommandContext()
 
@@ -736,25 +372,26 @@ describe('usage status', () => {
 
   describe('clears status when a non-Requesty provider is selected', () => {
     it.each(events)('on %s', async eventName => {
-      configureMockedDependencies()
+      mockEnv()
+      const { fetchApiUsage } = mockUsageDependencies()
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
       const { ctx, capturedStatusLines } = createFakeCommandContext({ modelProvider: 'anthropic' })
-      const fetchApiKeyInfo = vi.mocked(RequestyApiModule.fetchApiUsage)
 
       await fireEvent(eventHandlers, eventName, ctx)
 
       expect(capturedStatusLines).toEqual([{ key: USAGE_STATUS_KEY, text: undefined }])
-      expect(fetchApiKeyInfo).not.toHaveBeenCalled()
+      expect(fetchApiUsage).not.toHaveBeenCalled()
     })
   })
 
   describe('edge cases', () => {
     it('suppresses a stale success after a newer turn already wrote', async () => {
+      mockEnv()
       const firstInfo: ApiKeyInfo = { name: 'Slow', monthlySpend: 10, monthlyLimit: 100 }
       const secondInfo: ApiKeyInfo = { name: 'Fast', monthlySpend: 90, monthlyLimit: 100 }
       const first = createDeferred<ApiKeyInfo>()
       const second = createDeferred<ApiKeyInfo>()
-      configureMockedDependencies({ fetchApiUsageResults: [first.promise, second.promise] })
+      mockUsageDependencies([first.promise, second.promise])
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
       const { ctx, capturedStatusLines, waitForStatusLines } = createFakeCommandContext()
 
@@ -770,9 +407,10 @@ describe('usage status', () => {
     })
 
     it('de-dupes usage fetch via the requesty API within 2 seconds', async () => {
+      mockEnv()
       const firstInfo: ApiKeyInfo = { name: 'First', monthlySpend: 10, monthlyLimit: 100 }
       const secondInfo: ApiKeyInfo = { name: 'Second', monthlySpend: 90, monthlyLimit: 100 }
-      configureMockedDependencies({ fetchApiUsageResults: [createResolved(firstInfo), createResolved(secondInfo)] })
+      mockUsageDependencies([Promise.resolve(firstInfo), Promise.resolve(secondInfo)])
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
       const { ctx, capturedStatusLines, waitForStatusLines } = createFakeCommandContext()
 
@@ -786,10 +424,11 @@ describe('usage status', () => {
     })
 
     it('re-fetches usage from the requesty API after 2 seconds', async () => {
+      mockEnv()
       const timers = vi.useFakeTimers()
       const firstInfo: ApiKeyInfo = { name: 'First', monthlySpend: 10, monthlyLimit: 100 }
       const secondInfo: ApiKeyInfo = { name: 'Second', monthlySpend: 90, monthlyLimit: 100 }
-      configureMockedDependencies({ fetchApiUsageResults: [createResolved(firstInfo), createResolved(secondInfo)] })
+      mockUsageDependencies([Promise.resolve(firstInfo), Promise.resolve(secondInfo)])
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
       const { ctx, capturedStatusLines, waitForStatusLines } = createFakeCommandContext()
 
@@ -804,10 +443,11 @@ describe('usage status', () => {
     })
 
     it('suppresses a stale error after a newer turn already wrote', async () => {
+      mockEnv()
       const secondInfo: ApiKeyInfo = { name: 'Fast', monthlySpend: 90, monthlyLimit: 100 }
       const first = createDeferred<ApiKeyInfo>()
       const second = createDeferred<ApiKeyInfo>()
-      configureMockedDependencies({ fetchApiUsageResults: [first.promise, second.promise] })
+      mockUsageDependencies([first.promise, second.promise])
       const { eventHandlers, USAGE_STATUS_KEY } = await loadExtension()
       const { ctx, capturedStatusLines, waitForStatusLines } = createFakeCommandContext()
 
@@ -823,27 +463,29 @@ describe('usage status', () => {
     })
 
     it('skips the fetch and writes nothing when there is no UI (print/json mode)', async () => {
-      configureMockedDependencies()
+      mockEnv()
+      const { fetchApiUsage } = mockUsageDependencies()
       const { eventHandlers } = await loadExtension()
       const { ctx, capturedStatusLines } = createFakeCommandContext({ hasUI: false })
-      const fetchApiKeyInfo = vi.mocked(RequestyApiModule.fetchApiUsage)
 
       await fireEvent(eventHandlers, 'turn_end', ctx)
 
       expect(capturedStatusLines).toEqual([])
-      expect(fetchApiKeyInfo).not.toHaveBeenCalled()
+      expect(fetchApiUsage).not.toHaveBeenCalled()
     })
 
     it('shows env load errors on session_start', async () => {
-      configureMockedDependencies({ getEnvError: new Error('I am error') })
+      mockEnv(new Error('I am error'))
+      const { fetchApiUsage } = mockUsageDependencies()
       const { eventHandlers } = await loadExtension()
       const { ctx, capturedNotifications } = createFakeCommandContext()
-      const fetchApiKeyInfo = vi.mocked(RequestyApiModule.fetchApiUsage)
 
       await fireEvent(eventHandlers, 'session_start', ctx)
 
-      expect(capturedNotifications).toMatchSnapshot()
-      expect(fetchApiKeyInfo).not.toHaveBeenCalled()
+      expect(capturedNotifications).toEqual([
+        { message: `${COMMAND_NAME}: failed to load env: I am error`, type: 'error' },
+      ])
+      expect(fetchApiUsage).not.toHaveBeenCalled()
     })
   })
 })
@@ -858,10 +500,6 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
   return { promise, resolve, reject }
 }
 
-function createResolved<T>(value: T): Promise<T> {
-  return Promise.resolve(value)
-}
-
 function containing(substr: string): string {
   return expect.stringContaining(substr) as string
 }
@@ -870,114 +508,6 @@ function containing(substr: string): string {
 async function flushMicrotasks(rounds = 100): Promise<void> {
   for (let drained = 0; drained < rounds; drained++) {
     await Promise.resolve()
-  }
-}
-
-/** Configure mocked domain deps. No Pi registration. */
-function configureMockedDependencies(scenario: MockScenario = {}) {
-  const models = scenario.models ?? [createModel({ id: 'requesty/model-a' })]
-  const healthResults = scenario.healthResults ?? models.map(model => createHealthCheckResult({ modelId: model.id }))
-
-  const { updateModelsJson, formatModelsDiffSummary, getRequestyConfig } = mockModelsModule(scenario)
-  const { discoverModels, fetchApiKeyInfo } = mockRequestyApiModule(scenario, models)
-  const { formatHealthSummary, writeHealthCheckLog } = mockHealthCheckModule(healthResults)
-  const mockedEnv = mockEnvModule(scenario)
-
-  return {
-    getRequestyConfig,
-    updateModelsJson,
-    discoverModels,
-    fetchApiKeyInfo,
-    formatHealthSummary,
-    writeHealthCheckLog,
-    formatModelsDiffSummary,
-    mockedEnv,
-  }
-}
-
-function mockModelsModule(scenario: MockScenario) {
-  const getRequestyConfig = vi.mocked(ModelsJsonModule.getRequestyConfig)
-  if (scenario.getRequestyConfigError) {
-    getRequestyConfig.mockThrow(scenario.getRequestyConfigError)
-  } else {
-    getRequestyConfig.mockImplementation(async (apiKeyProvider, env) => {
-      const apiKey = await apiKeyProvider.getApiKey(env!.provider_id)
-      return {
-        data: modelsJson,
-        provider: { ...provider, apiKey: apiKey ?? 'not-found' },
-        existingModelIds: [],
-      }
-    })
-  }
-
-  const updateModelsJson = vi.mocked(ModelsJsonModule.updateModelsJson)
-  const diffModels = vi.mocked(ModelsJsonModule.diffModels)
-  diffModels.mockReturnValue(scenario.diff ?? { added: [], removed: [] })
-  const formatModelsDiffSummary = vi.mocked(ModelsJsonModule.formatModelsDiffSummary)
-  formatModelsDiffSummary.mockReturnValue('Models diff summary.')
-  return { updateModelsJson, formatModelsDiffSummary, getRequestyConfig }
-}
-
-function mockRequestyApiModule(scenario: MockScenario, models: ProviderModelConfig[]) {
-  const discoverModels = vi.mocked(RequestyApiModule.discoverModels)
-  if (scenario.discoverModelsError) {
-    discoverModels.mockRejectedValue(scenario.discoverModelsError)
-  } else {
-    discoverModels.mockResolvedValue(models)
-  }
-  const fetchApiKeyInfo = vi.mocked(RequestyApiModule.fetchApiUsage)
-  fetchApiKeyInfo.mockReset()
-  if (scenario.fetchApiUsageResults) {
-    for (const result of scenario.fetchApiUsageResults) {
-      fetchApiKeyInfo.mockReturnValueOnce(result)
-    }
-  } else {
-    fetchApiKeyInfo.mockResolvedValue({ name: 'Playground', monthlySpend: 0, monthlyLimit: 0 })
-  }
-  return { discoverModels, fetchApiKeyInfo }
-}
-
-function mockHealthCheckModule(healthResults: HealthCheckResult[]) {
-  const checkModels = vi.mocked(HealthCheckModule.checkModels)
-  checkModels.mockImplementation(
-    async (
-      _provider,
-      checkedModels,
-      _checkReasoning,
-      healthCheckOptions,
-      // part of function signature
-      // eslint-disable-next-line @typescript-eslint/require-await
-    ) => {
-      healthResults.forEach((result, index) => {
-        healthCheckOptions?.onProgress?.({
-          completed: index + 1,
-          total: checkedModels.length,
-          modelId: result.modelId,
-        })
-      })
-      return healthResults
-    },
-  )
-  const formatHealthSummary = vi.mocked(HealthCheckModule.formatHealthSummary)
-  formatHealthSummary.mockReturnValue('Health check summary.\n')
-  const writeHealthCheckLog = vi.mocked(HealthCheckModule.writeHealthCheckLog)
-  return { formatHealthSummary, writeHealthCheckLog }
-}
-
-function mockEnvModule(options: MockScenario): Try<Env> {
-  const mockedEnv: Env = {
-    models_json_path: MODELS_JSON_PATH,
-    health_check_log_path: HEALTH_CHECK_LOG_PATH,
-    provider_id: REQUESTY_PROVIDER_ID,
-    health_check_mode: options.healthCheckMode ?? 'basic',
-  }
-  const getEnv = vi.mocked(EnvModule.getEnv)
-  if (options.getEnvError) {
-    getEnv.mockThrow(options.getEnvError)
-    return { ok: false, error: options.getEnvError }
-  } else {
-    getEnv.mockReturnValue(mockedEnv)
-    return { ok: true, value: mockedEnv }
   }
 }
 
@@ -997,6 +527,13 @@ async function loadExtension() {
     runDiscoveryWorkflow: extension.runDiscoveryWorkflow,
     formatUsageStatus: extension.formatUsageStatus,
     USAGE_STATUS_KEY: extension.USAGE_STATUS_KEY,
+    createUiNotifier: extension.createUiNotifier,
+    createUiConfirmer: extension.createUiConfirmer,
+    createLoaderStatusReporter: extension.createLoaderStatusReporter,
+    createConsoleNotifier: extension.createConsoleNotifier,
+    createConsoleStatusReporter: extension.createConsoleStatusReporter,
+    createNoopConfirmer: extension.createNoopConfirmer,
+    createApiKeyProvider: extension.createApiKeyProvider,
     eventHandlers,
   }
 }
@@ -1009,29 +546,38 @@ async function getArgumentCompletions(command: TestCommand, prefix: string) {
   return command.getArgumentCompletions(prefix)
 }
 
-function createHealthCheckResult(overrides: Partial<HealthCheckResult> = {}): HealthCheckResult {
+function createEvaluation(overrides: Partial<DiscoveryEvaluation> = {}): DiscoveryEvaluation {
   return {
-    modelId: 'requesty/model',
-    ok: true,
-    latencyMs: 123,
+    dryRun: false,
+    modelCount: 1,
+    failedCount: 0,
+    passing: [],
+    diff: { added: [], removed: [] },
+    healthCheckSummary: '',
+    logNote: '',
+    data: { providers: {} },
     ...overrides,
   }
 }
 
-function createModel(overrides: Partial<ProviderModelConfig> = {}): ProviderModelConfig {
-  return {
-    id: 'requesty/model',
-    name: 'Requesty Model',
-    reasoning: false,
-    input: ['text'],
-    cost: {
-      input: 1,
-      output: 2,
-      cacheRead: 3,
-      cacheWrite: 4,
-    },
-    contextWindow: 128000,
-    maxTokens: 4096,
-    ...overrides,
+function mockEnv(getEnvError?: unknown): Try<Env> {
+  const mockedEnv: Env = {
+    models_json_path: MODELS_JSON_PATH,
+    health_check_log_path: HEALTH_CHECK_LOG_PATH,
+    provider_id: REQUESTY_PROVIDER_ID,
+    health_check_mode: 'basic',
   }
+  const getEnv = vi.mocked(EnvModule.getEnv)
+  if (getEnvError) {
+    getEnv.mockThrow(getEnvError)
+    return { ok: false, error: getEnvError }
+  }
+  getEnv.mockReturnValue(mockedEnv)
+  return { ok: true, value: mockedEnv }
+}
+
+function mockOkEnv(): { ok: true; value: Env } {
+  const result = mockEnv()
+  if (!result.ok) throw new Error('expected mockEnv() to succeed')
+  return result
 }

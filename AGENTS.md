@@ -30,7 +30,8 @@ Do **not** add a build/transpile step unless explicitly requested.
 
 - index.ts – package-facing Pi extension entrypoint; re-exports src/index.ts
 - src/
-  - index.ts — Pi command registration and high-level command flow
+  - index.ts — Pi command registration, event wiring, and ctx-dependent UI adapters for the discovery workflow
+  - discovery.ts — pure discovery workflow logic (evaluate, finalize, argument completions)
   - env.ts — environment variables and paths to Pi
   - models-json.ts — read/validate/update models.json
   - requesty-api.ts — Requesty models library API

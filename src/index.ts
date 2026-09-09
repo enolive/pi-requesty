@@ -1,59 +1,28 @@
-import {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
-  ProviderModelConfig,
-} from '@earendil-works/pi-coding-agent'
+import { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { type Env, getEnv } from './env'
-import {
-  ApiKeyProvider,
-  diffModels,
-  formatModelsDiffSummary,
-  getRequestyConfig,
-  type ModelsDiff,
-  ModelsJson,
-  updateModelsJson,
-} from './models-json'
-import { type ApiKeyInfo, discoverModels, fetchApiUsage } from './requesty-api'
-import { checkModels, formatHealthSummary, writeHealthCheckLog } from './health-check'
+import { ApiKeyProvider, getRequestyConfig } from './models-json'
+import { type ApiKeyInfo, fetchApiUsage } from './requesty-api'
 import { RequestyStatusLoader } from './ui/requesty-status-loader.ts'
+import {
+  complainOnBrokenEnv,
+  type Confirmer,
+  DiscoveryEvaluation,
+  evaluateDiscovery,
+  finalizeDiscovery,
+  formatDiscoveryFailure,
+  getArgumentCompletions,
+  type Notifier,
+  type NotificationLevel,
+  runCatching,
+  runCatchingAsync,
+  type StatusReporter,
+  type Try,
+} from './discovery'
+
+export { type Try }
 
 const COMMAND_NAME = 'requesty-discover'
-const DRY_RUN_ARG = '--dry-run'
 export const USAGE_STATUS_KEY = 'requesty-usage'
-
-interface AutocompleteItem {
-  value: string
-  label: string
-  description: string
-}
-
-export type NotificationLevel = 'info' | 'warning' | 'error'
-
-export type Notifier = {
-  notify(message: string, level: NotificationLevel): void
-}
-
-export type Confirmer = {
-  confirm(title: string, message: string): Promise<boolean>
-}
-
-export type StatusReporter = {
-  set(message: string): void
-}
-
-type DiscoveryEvaluation = {
-  dryRun: boolean
-  modelCount: number
-  failedCount: number
-  passing: ProviderModelConfig[]
-  diff: ModelsDiff
-  healthCheckSummary: string
-  logNote: string
-  data: ModelsJson
-}
-
-export type Try<T> = { ok: true; value: T } | { ok: false; error: unknown }
 
 // token suppresses stale writes when turns overlap
 let latestToken: object = {}
@@ -96,13 +65,13 @@ export async function runDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Tr
 export async function runInteractiveDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
   const notifier = createUiNotifier(ctx)
   complainOnBrokenEnv(notifier, env)
-  if (!env.ok) return
+  if (!env.ok) {
+    return
+  }
 
   const confirmer = createUiConfirmer(ctx)
   const apiProvider = createApiKeyProvider(ctx)
 
-  // Phase A: progress UI only. Loader must close before confirm (Phase B).
-  // Errors are wrapped because ctx.ui.custom resolves via done() and does not reject.
   const evaluationResult: Try<DiscoveryEvaluation> = await runWithStatusUi(
     ctx,
     'Discovering models...',
@@ -114,14 +83,16 @@ export async function runInteractiveDiscoveryWorkflow(ctx: ExtensionCommandConte
     return
   }
 
-  // Phases B + C: decide, optional write, final notify — outside the loader.
   await finalizeDiscovery(evaluationResult.value, confirmer, notifier, env.value)
 }
 
 export async function runSilentDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
   const notifier = createConsoleNotifier()
   complainOnBrokenEnv(notifier, env)
-  if (!env.ok) return
+  if (!env.ok) {
+    return
+  }
+
   const apiProvider = createApiKeyProvider(ctx)
   const status = createConsoleStatusReporter()
   const confirmer = createNoopConfirmer()
@@ -138,11 +109,6 @@ export async function runSilentDiscoveryWorkflow(ctx: ExtensionCommandContext, e
   await finalizeDiscovery(evaluationResult.value, confirmer, notifier, env.value)
 }
 
-function formatDiscoveryFailure(error: unknown): string {
-  const detail = formatError(error)
-  return `Discovery failed: ${detail}`
-}
-
 async function runWithStatusUi<T>(
   ctx: ExtensionCommandContext,
   initialMessage: string,
@@ -157,185 +123,6 @@ async function runWithStatusUi<T>(
       .catch(done)
     return loader
   })
-}
-
-async function evaluateDiscovery(
-  args: string,
-  env: Env,
-  status: StatusReporter,
-  apiKeyProvider: ApiKeyProvider,
-): Promise<DiscoveryEvaluation> {
-  status.set('Discovering Requesty models...')
-  const dryRun = args.split(' ').includes(DRY_RUN_ARG)
-
-  const { data, provider, existingModelIds } = await getRequestyConfig(apiKeyProvider, env)
-  const models = await discoverModels(provider)
-  const modelsMap = new Map(models.map(m => [m.id, m]))
-
-  let diff: ModelsDiff
-  let failedCount = 0
-  let passing: ProviderModelConfig[]
-  let logNote = ''
-  let healthCheckSummary = ''
-
-  if (env.health_check_mode !== 'off') {
-    status.set(`Checking models 0/${models.length}...`)
-    const healthResults = await checkModels(provider, models, env.health_check_mode === 'full', {
-      onProgress: ({ completed, total }) => {
-        status.set(`Checking models ${completed}/${total}...`)
-      },
-    })
-    const sortedResults = healthResults.toSorted((a, b) => a.modelId.localeCompare(b.modelId))
-    failedCount = sortedResults.filter(r => !r.ok).length
-    passing = sortedResults.flatMap(r => {
-      const model = modelsMap.get(r.modelId)
-      return r.ok && model ? [model] : []
-    })
-    diff = diffModels(existingModelIds, passing)
-    healthCheckSummary = formatHealthSummary(sortedResults)
-    writeHealthCheckLog(provider, sortedResults, diff, env)
-    logNote = `Full health check log: ${env.health_check_log_path}\n`
-  } else {
-    passing = models
-    diff = diffModels(existingModelIds, passing)
-  }
-
-  return {
-    dryRun,
-    modelCount: models.length,
-    failedCount,
-    passing,
-    diff,
-    healthCheckSummary,
-    logNote,
-    data,
-  }
-}
-
-async function finalizeDiscovery(
-  evaluation: DiscoveryEvaluation,
-  confirmer: Confirmer,
-  notifier: Notifier,
-  env: Env,
-): Promise<void> {
-  const level = notificationLevel(evaluation)
-  const summary = buildDiscoverySummary(evaluation)
-
-  // Always surface the discovery result first (toast styling), then decide.
-  if (evaluation.dryRun) {
-    notifier.notify(
-      `${summary}
-Dry run: left models.json unchanged.`,
-      level,
-    )
-    return
-  }
-
-  if (evaluation.passing.length === 0) {
-    notifier.notify(
-      `${summary}
-Left models.json unchanged.`,
-      level,
-    )
-    return
-  }
-
-  notifier.notify(summary, level)
-  const { title, message } = buildConfirmPrompt(evaluation)
-  const shouldUpdate = await confirmer.confirm(title, message)
-  if (shouldUpdate) {
-    updateModelsJson(evaluation.data, evaluation.passing, env)
-    notifier.notify('Updated models.json. Run /reload to use the changes.', 'info')
-    return
-  }
-
-  notifier.notify('Left models.json unchanged.', 'info')
-}
-
-function buildDiscoverySummary(evaluation: DiscoveryEvaluation): string {
-  return [
-    `Discovered ${evaluation.modelCount} Requesty model(s).`,
-    evaluation.healthCheckSummary.trimEnd(),
-    formatModelsDiffSummary(evaluation.diff),
-    evaluation.logNote.trimEnd(),
-  ]
-    .filter(part => part.length > 0)
-    .join('\n')
-}
-
-function buildConfirmPrompt(evaluation: DiscoveryEvaluation): { title: string; message: string } {
-  const hasIdChanges = evaluation.diff.added.length > 0 || evaluation.diff.removed.length > 0
-  if (hasIdChanges) {
-    return {
-      title: `Write ${evaluation.passing.length} model(s)?`,
-      message: 'Update models.json with the discovery result above.',
-    }
-  }
-  return {
-    title: 'Refresh models.json?',
-    message: 'No model ID changes. Rewrite the file to refresh metadata anyway?',
-  }
-}
-
-function notificationLevel(evaluation: DiscoveryEvaluation): NotificationLevel {
-  if (evaluation.failedCount === 0) return 'info'
-  if (evaluation.failedCount < evaluation.modelCount) return 'warning'
-  return 'error'
-}
-
-function getArgumentCompletions(prefix: string): AutocompleteItem[] {
-  const options = [
-    {
-      value: DRY_RUN_ARG,
-      label: DRY_RUN_ARG,
-      description: 'Preview discovery without offering to write models.json',
-    },
-  ]
-  if (!prefix) return options
-  return options.filter(o => o.value.toLowerCase().startsWith(prefix.toLowerCase()))
-}
-
-function createUiNotifier(ctx: ExtensionContext): Notifier {
-  return {
-    notify(message: string, level?: NotificationLevel) {
-      const prefixedMessage = `${COMMAND_NAME}: ${message}`
-      ctx.ui.notify(prefixedMessage, level)
-    },
-  }
-}
-
-function createUiConfirmer(ctx: ExtensionContext): Confirmer {
-  return {
-    confirm(title, message) {
-      return ctx.ui.confirm(title, message)
-    },
-  }
-}
-
-function createLoaderStatusReporter(loader: RequestyStatusLoader): StatusReporter {
-  return {
-    set(message: string) {
-      loader.setMessage(message)
-    },
-  }
-}
-
-function createConsoleNotifier(): Notifier {
-  return {
-    notify: (message: string, _level: NotificationLevel) => console.log(`[${_level}] ${message}`),
-  }
-}
-
-function createConsoleStatusReporter(): StatusReporter {
-  return {
-    set: (message: string) => console.log(message),
-  }
-}
-
-function createNoopConfirmer(): Confirmer {
-  return {
-    confirm: () => Promise.resolve(true),
-  }
 }
 
 async function updateUsageStatus(ctx: ExtensionContext, env: Try<Env>): Promise<void> {
@@ -381,10 +168,6 @@ async function fetchUsageStatus(apiKeyProvider: ApiKeyProvider, env: Env): Promi
   return value
 }
 
-function formatError(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
-}
-
 /**
  * For testing purposes, reset the cache after each run
  */
@@ -392,35 +175,56 @@ export function resetUsageStatusCache(): void {
   lastFetched = undefined
 }
 
-function runCatching<T>(fn: () => T): Try<T> {
-  try {
-    return { ok: true, value: fn() }
-  } catch (error) {
-    return { ok: false, error }
-  }
-}
-
-async function runCatchingAsync<T>(fn: () => Promise<T>): Promise<Try<T>> {
-  try {
-    return { ok: true, value: await fn() }
-  } catch (error) {
-    return { ok: false, error }
-  }
-}
-
-function complainOnBrokenEnv(notifier: Notifier, env: Try<Env>) {
-  if (!env.ok) {
-    notifier.notify(`failed to load env: ${formatError(env.error)}`, 'error')
-  }
-}
-
 /**
  * minimal abstraction for getting an API key to not pollute anything outside index.ts with too many pi internals.
  */
-function createApiKeyProvider(ctx: ExtensionContext): ApiKeyProvider {
+export function createApiKeyProvider(ctx: ExtensionContext): ApiKeyProvider {
   return {
     async getApiKey(providerId: string) {
       return ctx.modelRegistry.getApiKeyForProvider(providerId)
     },
+  }
+}
+
+export function createUiNotifier(ctx: ExtensionContext): Notifier {
+  return {
+    notify(message: string, level?: NotificationLevel) {
+      const prefixedMessage = `${COMMAND_NAME}: ${message}`
+      ctx.ui.notify(prefixedMessage, level)
+    },
+  }
+}
+
+export function createUiConfirmer(ctx: ExtensionContext): Confirmer {
+  return {
+    confirm(title, message) {
+      return ctx.ui.confirm(title, message)
+    },
+  }
+}
+
+export function createLoaderStatusReporter(loader: RequestyStatusLoader): StatusReporter {
+  return {
+    set(message: string) {
+      loader.setMessage(message)
+    },
+  }
+}
+
+export function createConsoleNotifier(): Notifier {
+  return {
+    notify: (message: string, _level: NotificationLevel) => console.log(`[${_level}] ${message}`),
+  }
+}
+
+export function createConsoleStatusReporter(): StatusReporter {
+  return {
+    set: (message: string) => console.log(message),
+  }
+}
+
+export function createNoopConfirmer(): Confirmer {
+  return {
+    confirm: () => Promise.resolve(true),
   }
 }
