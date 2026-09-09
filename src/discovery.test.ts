@@ -296,7 +296,7 @@ describe('finalizeDiscovery', () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
 
-    await finalizeDiscovery(createEvaluation({ dryRun: true }), confirmer, notifier, createEnv())
+    await finalizeDiscovery(createEvaluation({ dryRun: true }), createEnv(), confirmer, notifier)
 
     expect(updateModelsJson).not.toHaveBeenCalled()
     expect(confirmer.confirmations).toEqual([])
@@ -308,7 +308,7 @@ describe('finalizeDiscovery', () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
 
-    await finalizeDiscovery(createEvaluation({ passing: [] }), confirmer, notifier, createEnv())
+    await finalizeDiscovery(createEvaluation({ passing: [] }), createEnv(), confirmer, notifier)
 
     expect(confirmer.confirmations).toEqual([])
     expect(updateModelsJson).not.toHaveBeenCalled()
@@ -321,7 +321,7 @@ describe('finalizeDiscovery', () => {
     const confirmer = createConfirmer(true)
     const evaluation = createEvaluation()
 
-    await finalizeDiscovery(evaluation, confirmer, notifier, createEnv())
+    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier)
 
     expect(confirmer.confirmations).toHaveLength(1)
     expect(updateModelsJson).toHaveBeenCalledWith(evaluation.data, evaluation.passing, expect.any(Object))
@@ -336,7 +336,7 @@ describe('finalizeDiscovery', () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(false)
 
-    await finalizeDiscovery(createEvaluation(), confirmer, notifier, createEnv())
+    await finalizeDiscovery(createEvaluation(), createEnv(), confirmer, notifier)
 
     expect(updateModelsJson).not.toHaveBeenCalled()
     expect(notifier.notifications.at(-1)).toEqual({
@@ -349,7 +349,7 @@ describe('finalizeDiscovery', () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
 
-    await finalizeDiscovery(createEvaluation({ diff: { added: [], removed: [] } }), confirmer, notifier, createEnv())
+    await finalizeDiscovery(createEvaluation({ diff: { added: [], removed: [] } }), createEnv(), confirmer, notifier)
 
     expect(confirmer.confirmations).toEqual([
       {
@@ -364,7 +364,7 @@ describe('finalizeDiscovery', () => {
     const confirmer = createConfirmer(true)
     const evaluation = createEvaluation({ diff: { added: ['requesty/model-new'], removed: [] } })
 
-    await finalizeDiscovery(evaluation, confirmer, notifier, createEnv())
+    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier)
 
     expect(confirmer.confirmations).toEqual([
       {
@@ -378,7 +378,7 @@ describe('finalizeDiscovery', () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
 
-    await finalizeDiscovery(createEvaluation({ failedCount: 0, modelCount: 2 }), confirmer, notifier, createEnv())
+    await finalizeDiscovery(createEvaluation({ failedCount: 0, modelCount: 2 }), createEnv(), confirmer, notifier)
 
     expect(notifier.notifications[0]?.level).toBe('info')
   })
@@ -387,7 +387,7 @@ describe('finalizeDiscovery', () => {
     const notifier = createNotifier()
     const confirmer = createConfirmer(true)
 
-    await finalizeDiscovery(createEvaluation({ failedCount: 1, modelCount: 2 }), confirmer, notifier, createEnv())
+    await finalizeDiscovery(createEvaluation({ failedCount: 1, modelCount: 2 }), createEnv(), confirmer, notifier)
 
     expect(notifier.notifications[0]?.level).toBe('warning')
   })
@@ -398,9 +398,9 @@ describe('finalizeDiscovery', () => {
 
     await finalizeDiscovery(
       createEvaluation({ failedCount: 2, modelCount: 2, passing: [] }),
+      createEnv(),
       confirmer,
       notifier,
-      createEnv(),
     )
 
     expect(notifier.notifications[0]?.level).toBe('error')
@@ -415,7 +415,7 @@ describe('finalizeDiscovery', () => {
       diff: { added: ['requesty/model-a'], removed: [] },
     })
 
-    await finalizeDiscovery(evaluation, confirmer, notifier, createEnv())
+    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier)
 
     expect(notifier.notifications[0]?.message).toEqual(
       [

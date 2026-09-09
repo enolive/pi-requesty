@@ -83,7 +83,7 @@ export async function runInteractiveDiscoveryWorkflow(ctx: ExtensionCommandConte
     return
   }
 
-  await finalizeDiscovery(evaluationResult.value, confirmer, notifier, env.value)
+  await finalizeDiscovery(evaluationResult.value, env.value, confirmer, notifier)
 }
 
 export async function runSilentDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
@@ -106,7 +106,7 @@ export async function runSilentDiscoveryWorkflow(ctx: ExtensionCommandContext, e
     return
   }
 
-  await finalizeDiscovery(evaluationResult.value, confirmer, notifier, env.value)
+  await finalizeDiscovery(evaluationResult.value, env.value, confirmer, notifier)
 }
 
 async function runWithStatusUi<T>(

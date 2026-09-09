@@ -107,9 +107,9 @@ export async function evaluateDiscovery(
 
 export async function finalizeDiscovery(
   evaluation: DiscoveryEvaluation,
+  env: Env,
   confirmer: Confirmer,
   notifier: Notifier,
-  env: Env,
 ): Promise<void> {
   const level = notificationLevel(evaluation)
   const summary = buildDiscoverySummary(evaluation)

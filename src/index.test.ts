@@ -81,9 +81,9 @@ describe('extension registration', () => {
     )
     expect(DiscoveryModule.finalizeDiscovery).toHaveBeenCalledWith(
       evaluation,
-      expect.any(Object),
-      expect.any(Object),
       mockedEnv.value,
+      expect.any(Object),
+      expect.any(Object),
     )
   })
 })
@@ -119,7 +119,7 @@ describe('runDiscoveryWorkflow mode dispatch', () => {
     expect(args).toBe('')
     expect(envArg).toBe(mockedEnv.value)
     await expect(apiKeyProvider.getApiKey(REQUESTY_PROVIDER_ID)).resolves.toBe('my-api-key')
-    const [evaluationArg, , , finalizeEnvArg] = vi.mocked(DiscoveryModule.finalizeDiscovery).mock.calls[0]
+    const [evaluationArg, finalizeEnvArg] = vi.mocked(DiscoveryModule.finalizeDiscovery).mock.calls[0]
     expect(evaluationArg).toBe(evaluation)
     expect(finalizeEnvArg).toBe(mockedEnv.value)
   })
@@ -277,7 +277,7 @@ describe('ui adapters passed to discovery (silent mode)', () => {
       await Promise.resolve()
       return createEvaluation()
     })
-    vi.mocked(DiscoveryModule.finalizeDiscovery).mockImplementation(async (_evaluation, confirmer, notifier) => {
+    vi.mocked(DiscoveryModule.finalizeDiscovery).mockImplementation(async (_evaluation, _env, confirmer, notifier) => {
       const confirmed = await confirmer.confirm('title', 'message')
       notifier.notify(`confirmed: ${confirmed}`, 'info')
     })
