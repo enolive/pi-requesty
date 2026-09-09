@@ -76,7 +76,9 @@ describe('requesty-models-discover integration', () => {
     extension.default(pi)
     const command = commands.get(COMMAND_NAME)
     expect(command).toBeDefined()
-    const { ctx, capturedNotifications } = createFakeCommandContext()
+    const { ctx, capturedNotifications } = createFakeCommandContext({
+      knownApiKeys: { [DEFAULT_PROVIDER_ID]: 'integration-test-api-key' },
+    })
 
     await command!.handler('', ctx)
 
@@ -86,7 +88,7 @@ describe('requesty-models-discover integration', () => {
     // 3+4: health check model with reasoning
     expect(usedAuthKeys).toHaveLength(4)
     const uniqueAuthKeys = [...new Set(usedAuthKeys)]
-    expect(uniqueAuthKeys).toEqual(['Bearer test-api-key'])
+    expect(uniqueAuthKeys).toEqual(['Bearer integration-test-api-key'])
     const modelsJson = await readJson(tempDirectory.modelsJsonPath)
     expect(modelsJson).toMatchSnapshot()
     const healthCheckLog = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
