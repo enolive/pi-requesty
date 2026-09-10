@@ -105,6 +105,7 @@ describe('requesty-models-discover integration', () => {
     })
     expect(capturedModelRefreshes).toEqual([{ allowNetwork: false }])
   })
+})
 
 async function writeInitialModelsJson(modelsJsonPath: string): Promise<void> {
   await fs.writeFile(
