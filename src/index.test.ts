@@ -39,17 +39,6 @@ const provider = {
   baseUrl: 'https://router.requesty.ai/v1',
   manageBaseUrl: 'https://api-v2.requesty.ai/v1/manage',
   apiKey: 'test-key',
-} satisfies Provider & { name: string; manageBaseUrl: string }
-
-const modelsJson = {
-  providers: {
-    [REQUESTY_PROVIDER_ID]: {
-      name: 'Requesty',
-      baseUrl: 'https://router.requesty.ai/v1',
-      apiKey: 'test-key',
-      models: [],
-    },
-  },
 }
 
 describe('extension registration', () => {
@@ -624,6 +613,8 @@ function mockEnv(getEnvError?: unknown): Try<Env> {
     models_json_path: MODELS_JSON_PATH,
     health_check_log_path: HEALTH_CHECK_LOG_PATH,
     provider_id: REQUESTY_PROVIDER_ID,
+    requesty_base_url: provider.baseUrl,
+    requesty_manage_base_url: provider.manageBaseUrl,
     health_check_mode: 'basic',
   }
   const getEnv = vi.mocked(EnvModule.getEnv)

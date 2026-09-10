@@ -131,8 +131,9 @@ describe('getRequestyConfig', () => {
       },
     })
     envConfig.requesty_base_url = 'https://custom.requesty.example/v1'
+    const getApiKey = createGetApiKey()
 
-    const config = getRequestyConfig(envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.provider.baseUrl).toBe('https://custom.requesty.example/v1')
   })
@@ -147,8 +148,9 @@ describe('getRequestyConfig', () => {
       },
     })
     envConfig.requesty_base_url = 'https://custom.requesty.example/v1///'
+    const getApiKey = createGetApiKey()
 
-    const config = getRequestyConfig(envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.provider.baseUrl).toBe('https://custom.requesty.example/v1')
   })
@@ -163,10 +165,9 @@ describe('getRequestyConfig', () => {
       },
     })
     envConfig.requesty_base_url = ''
+    const getApiKey = createGetApiKey()
 
-    const readConfig = () => getRequestyConfig(envConfig)
-
-    expect(readConfig).toThrow(/REQUESTY_BASE_URL/)
+    await expect(getRequestyConfig(getApiKey, envConfig)).rejects.toThrow(/REQUESTY_BASE_URL/)
   })
 
   it('does not treat a baseUrl containing the placeholder as a placeholder', async () => {
@@ -179,8 +180,9 @@ describe('getRequestyConfig', () => {
       },
     })
     envConfig.requesty_base_url = 'https://custom.requesty.example/v1'
+    const getApiKey = createGetApiKey()
 
-    const config = getRequestyConfig(envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.provider.baseUrl).toBe('https://router.requesty.ai/v1/$REQUESTY_BASE_URL')
   })
@@ -189,8 +191,9 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
+    const getApiKey = createGetApiKey()
 
-    const config = getRequestyConfig(envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.provider.manageBaseUrl).toBe('https://api-v2.requesty.ai/v1/manage')
   })
@@ -200,8 +203,9 @@ describe('getRequestyConfig', () => {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
     envConfig.requesty_manage_base_url = 'https://custom.requesty.example/v1/manage'
+    const getApiKey = createGetApiKey()
 
-    const config = getRequestyConfig(envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.provider.manageBaseUrl).toBe('https://custom.requesty.example/v1/manage')
   })
@@ -211,8 +215,9 @@ describe('getRequestyConfig', () => {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
     envConfig.requesty_manage_base_url = 'https://custom.requesty.example/v1/manage///'
+    const getApiKey = createGetApiKey()
 
-    const config = getRequestyConfig(envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.provider.manageBaseUrl).toBe('https://custom.requesty.example/v1/manage')
   })
