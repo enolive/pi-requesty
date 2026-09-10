@@ -28,6 +28,7 @@ export type HealthCheckResult = {
   ok: boolean
   latencyMs: number
   error?: string
+  url?: string
 }
 
 type ModelCheckResult = Omit<HealthCheckResult, 'modelId'>
@@ -94,7 +95,7 @@ export function formatHealthSummary(results: HealthCheckResult[]): string {
     return `Health check: all ${passed.length} OK.`
   }
 
-  const failedModels = failed.map(r => `- ${r.modelId}`).join('\n')
+  const failedModels = failed.map(r => `- ${r.modelId}${r.error ? `: ${r.error}` : ''}`).join('\n')
 
   return `Health check: ${passed.length} OK, ${failed.length} failed:\n${failedModels}\n`
 }
@@ -128,8 +129,9 @@ export function writeHealthCheckLog(
       lines.push(
         `Model: ${result.modelId}`,
         `Latency: ${result.latencyMs}ms`,
+        ...(result.url ? [`URL: ${result.url}`] : []),
         'Error:',
-        result.error || 'Unknown error',
+        result.error?.trim() || 'Unknown error',
         '',
         '---',
         '',
@@ -148,10 +150,11 @@ export async function postChatCompletion(
 ): Promise<ModelCheckResult> {
   const healthCheckOptions = resolveHealthCheckOptions(options)
   const start = Date.now()
+  const url = `${provider.baseUrl}/chat/completions`
 
   for (let attempt = 0; attempt <= healthCheckOptions.retries; attempt++) {
     try {
-      const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${provider.apiKey}`,
@@ -169,11 +172,12 @@ export async function postChatCompletion(
         return {
           ok: false,
           latencyMs,
+          url,
           error: `HTTP ${response.status} ${response.statusText}${text ? `: ${text}` : ''}`,
         }
       }
 
-      return await verifyFirstStreamChunk(response.body!, start)
+      return await verifyFirstStreamChunk(response.body!, start, url)
     } catch (err) {
       if (isTimeoutError(err) && attempt < healthCheckOptions.retries) {
         if (healthCheckOptions.retryDelayMs > 0) {
@@ -185,6 +189,7 @@ export async function postChatCompletion(
       return {
         ok: false,
         latencyMs: Date.now() - start,
+        url,
         error: isTimeoutError(err)
           ? `Timed out after ${attempts} attempt(s); per-attempt timeout is ${healthCheckOptions.timeoutMs / 1000}s`
           : String(err),
@@ -192,10 +197,14 @@ export async function postChatCompletion(
     }
   }
 
-  return { ok: false, latencyMs: Date.now() - start, error: 'Unknown error' }
+  return { ok: false, latencyMs: Date.now() - start, url, error: 'Unknown error' }
 }
 
-async function verifyFirstStreamChunk(body: ReadableStream<Uint8Array>, start: number): Promise<ModelCheckResult> {
+async function verifyFirstStreamChunk(
+  body: ReadableStream<Uint8Array>,
+  start: number,
+  url: string,
+): Promise<ModelCheckResult> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let tail = ''
@@ -226,7 +235,7 @@ async function verifyFirstStreamChunk(body: ReadableStream<Uint8Array>, start: n
         }
       }
     }
-    return { ok: false, latencyMs: Date.now() - start, error: 'Stream ended without content' }
+    return { ok: false, latencyMs: Date.now() - start, url, error: 'Stream ended without content' }
   } finally {
     await reader.cancel()
   }
@@ -280,6 +289,7 @@ async function checkModel(
     return {
       ok: false,
       latencyMs: reasoningResult.latencyMs,
+      url: reasoningResult.url,
       error: `Reasoning/tool check failed: ${reasoningResult.error}`,
     }
   }

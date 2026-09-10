@@ -57,6 +57,7 @@ describe('postChatCompletion', () => {
     expect(result).toMatchObject({
       ok: false,
       error: 'HTTP 502 Bad Gateway: bad gateway',
+      url: 'https://router.requesty.ai/v1/chat/completions',
     })
   })
 
@@ -289,9 +290,9 @@ describe('postChatCompletion', () => {
   it('retries timeout failures', async () => {
     let requestCount = 0
     server.use(
-      http.post(completionsEndpoint, async () => {
+      http.post(completionsEndpoint, async ({ request }) => {
         requestCount++
-        await delay(50)
+        await delayUntilAborted(request.signal, 50)
         return sseResponse([positiveStreamChunk])
       }),
     )
@@ -305,6 +306,7 @@ describe('postChatCompletion', () => {
     expect(result).toMatchObject({
       ok: false,
       error: 'Timed out after 2 attempt(s); per-attempt timeout is 0.001s',
+      url: 'https://router.requesty.ai/v1/chat/completions',
     })
     expect(requestCount).toBe(2)
   })
@@ -312,9 +314,9 @@ describe('postChatCompletion', () => {
   it('retries timeout failures without delay', async () => {
     let requestCount = 0
     server.use(
-      http.post(completionsEndpoint, async () => {
+      http.post(completionsEndpoint, async ({ request }) => {
         requestCount++
-        await delay(50)
+        await delayUntilAborted(request.signal, 50)
         return sseResponse([positiveStreamChunk])
       }),
     )
@@ -385,6 +387,7 @@ describe('checkModels', () => {
           error: "Reasoning/tool check failed: HTTP 418 I'm a Teapot: BAM",
           modelId: 'requesty/reasoning-model',
           ok: false,
+          url: 'https://router.requesty.ai/v1/chat/completions',
         }),
       ]),
     )
@@ -422,6 +425,7 @@ describe('checkModels', () => {
     expect(results[0]).toMatchObject({
       modelId: 'requesty/failing-model',
       ok: false,
+      url: 'https://router.requesty.ai/v1/chat/completions',
     })
   })
 
@@ -594,13 +598,29 @@ describe('health summary and log output', () => {
     expect(summaries).toMatchSnapshot()
   })
 
-  it('writes log file', async () => {
+  it('includes a short error description for each failed model in the summary', () => {
+    const results = [
+      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
+      createHealthCheckResult({
+        modelId: 'requesty/failing-model',
+        ok: false,
+        error: 'HTTP 500 Internal Server Error',
+      }),
+    ]
+
+    const summary = formatHealthSummary(results)
+
+    expect(summary).toContain('- requesty/failing-model: HTTP 500 Internal Server Error')
+  })
+
+  it('writes log file including the request URL for each failed model', async () => {
     const partialFailureResults = [
       createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
       createHealthCheckResult({
         modelId: 'requesty/failing-model',
         ok: false,
         error: 'HTTP 500 Internal Server Error',
+        url: 'https://router.requesty.ai/v1/chat/completions',
       }),
       createHealthCheckResult({
         modelId: 'requesty/failing-model-unknown-error',
@@ -694,4 +714,30 @@ function sseRawResponse(body: string) {
 
 function sseResponse(chunks: unknown[]) {
   return sseRawResponse(sseBody(chunks))
+}
+
+/**
+ * Resolves after `ms`, but rejects with the request's abort signal reason if it fires first.
+ * This makes AbortSignal.timeout deterministically abort MSW-intercepted requests, which `delay()`
+ * from msw does not honor on its own.
+ */
+function delayUntilAborted(signal: AbortSignal, ms: number): Promise<void> {
+  const rejectWithReason = (reject: (reason: Error) => void) => {
+    reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'))
+  }
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      rejectWithReason(reject)
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        rejectWithReason(reject)
+      },
+      { once: true },
+    )
+  })
 }
