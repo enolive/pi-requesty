@@ -24,7 +24,7 @@ Why not: Effect is a runtime, a generator DSL, and a worldview — not a utility
 Two call sites in a Pi extension don't justify the dependency weight or the
 learning curve for contributors. The hand-rolled version is ~10 lines
 (`Try<T>`, `runCatching`, `runCatchingAsync`, named after Kotlin's `Result`),
-lives in `src/index.ts`, and documents intent just as well.
+lives in `src/discovery.ts`, and documents intent just as well.
 
 Decision: keep the hand-rolled `Try<T>`. No `monads.ts` module either — rule of
 three. Revisit if the extension ever needs typed errors, retries, or resource
@@ -50,3 +50,4 @@ The provider-like parts (API model fetch, usage footer, wanting Pi-managed auth)
 real, but the health check and the snapshot model break the provider fit.
 
 Decision: stay a `/requesty-discover` command that writes `models.json`.
+

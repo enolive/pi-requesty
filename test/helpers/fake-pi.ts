@@ -42,6 +42,9 @@ export function createFakePi() {
   return { pi, commands, eventHandlers }
 }
 
+type RefreshOptions = Parameters<ModelRegistry['refresh']>[0]
+type RefreshResult = Awaited<ReturnType<ModelRegistry['refresh']>>
+
 type FakeCommandContextOptions = {
   mode?: ExtensionCommandContext['mode']
   /** Value returned by ctx.ui.confirm. Defaults to true so existing write paths keep working. */
@@ -50,6 +53,8 @@ type FakeCommandContextOptions = {
   modelProvider?: string
   /** Whether a UI/footer is available (ctx.hasUI). Defaults to true; set false for print/json mode. */
   hasUI?: boolean
+  knownApiKeys?: Record<string, string>
+  refreshResult?: RefreshResult
 }
 
 export function createFakeCommandContext(options: FakeCommandContextOptions = {}) {
@@ -91,6 +96,7 @@ export function createFakeCommandContext(options: FakeCommandContextOptions = {}
 
   const capturedUiOrder: ('notify' | 'confirm')[] = []
   const modelProvider = options.modelProvider ?? DEFAULT_PROVIDER_ID
+  const capturedModelRefreshes: RefreshOptions[] = []
 
   /**
    * The extension fires off the usage-status update without awaiting it, so tests must await the
@@ -108,6 +114,16 @@ export function createFakeCommandContext(options: FakeCommandContextOptions = {}
       )
     }
   }
+  const modelRegistry = {
+    getApiKeyForProvider: (providerId: string) => Promise.resolve((options.knownApiKeys ?? {})[providerId]),
+    refresh: (param: RefreshOptions) => {
+      capturedModelRefreshes.push(param)
+      return Promise.resolve(
+        options.refreshResult ?? { aborted: false, errors: new Map() },
+      ) satisfies Promise<RefreshResult>
+    },
+  } as unknown as ModelRegistry
+
   const ctx = {
     mode: options.mode ?? 'tui',
     hasUI: options.hasUI ?? true,
@@ -127,7 +143,7 @@ export function createFakeCommandContext(options: FakeCommandContextOptions = {}
         capturedStatusLines.push({ key, text })
       },
     },
-    modelRegistry: createModelRegistry(),
+    modelRegistry,
   } as unknown as ExtensionCommandContext
 
   return {
@@ -137,14 +153,9 @@ export function createFakeCommandContext(options: FakeCommandContextOptions = {}
     capturedStatusLines,
     capturedConfirmations,
     capturedUiOrder,
+    capturedModelRefreshes,
     waitForStatusLines,
   }
-}
-
-export function createModelRegistry(apiKey: string | null = 'test-api-key'): ModelRegistry {
-  return {
-    getApiKeyForProvider: () => Promise.resolve(apiKey ?? undefined),
-  } as unknown as ModelRegistry
 }
 
 export async function fireEvent(

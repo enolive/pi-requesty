@@ -1,59 +1,26 @@
-import {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
-  ModelRegistry,
-  ProviderModelConfig,
-} from '@earendil-works/pi-coding-agent'
+import { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { type Env, getEnv } from './env'
-import {
-  diffModels,
-  formatModelsDiffSummary,
-  getRequestyConfig,
-  type ModelsDiff,
-  ModelsJson,
-  updateModelsJson,
-} from './models-json'
-import { type ApiKeyInfo, discoverModels, fetchApiUsage } from './requesty-api'
-import { checkModels, formatHealthSummary, writeHealthCheckLog } from './health-check'
+import { GetApiKey, getRequestyConfig } from './models-json'
+import { type ApiKeyInfo, fetchApiUsage } from './requesty-api'
 import { RequestyStatusLoader } from './ui/requesty-status-loader.ts'
+import {
+  complainOnBrokenEnv,
+  type DiscoveryEvaluation,
+  type DiscoveryUi,
+  evaluateDiscovery,
+  finalizeDiscovery,
+  formatDiscoveryFailure,
+  getArgumentCompletions,
+  RefreshModelsRegistry,
+  runCatching,
+  runCatchingAsync,
+  type Try,
+} from './discovery'
+
+export { type Try }
 
 const COMMAND_NAME = 'requesty-discover'
-const DRY_RUN_ARG = '--dry-run'
 export const USAGE_STATUS_KEY = 'requesty-usage'
-
-interface AutocompleteItem {
-  value: string
-  label: string
-  description: string
-}
-
-export type NotificationLevel = 'info' | 'warning' | 'error'
-
-export type Notifier = {
-  notify(message: string, level: NotificationLevel): void
-}
-
-export type Confirmer = {
-  confirm(title: string, message: string): Promise<boolean>
-}
-
-export type StatusReporter = {
-  set(message: string): void
-}
-
-type DiscoveryEvaluation = {
-  dryRun: boolean
-  modelCount: number
-  failedCount: number
-  passing: ProviderModelConfig[]
-  diff: ModelsDiff
-  healthCheckSummary: string
-  logNote: string
-  data: ModelsJson
-}
-
-export type Try<T> = { ok: true; value: T } | { ok: false; error: unknown }
 
 // token suppresses stale writes when turns overlap
 let latestToken: object = {}
@@ -75,7 +42,8 @@ export default function (pi: ExtensionAPI) {
   })
 
   pi.on('session_start', (_event, ctx) => {
-    complainOnBrokenEnv(ctx, env)
+    const ui = createTuiUi(ctx)
+    complainOnBrokenEnv(ui, env)
     void updateUsageStatus(ctx, env)
   })
 
@@ -85,213 +53,62 @@ export default function (pi: ExtensionAPI) {
 }
 
 export async function runDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
-  complainOnBrokenEnv(ctx, env)
-  if (!env.ok) return
-  // Interactive TUI command; no print/json/rpc path.
-  if (ctx.mode !== 'tui') {
+  const ui = ctx.mode === 'tui' ? createTuiUi(ctx) : createConsoleUi()
+  complainOnBrokenEnv(ui, env)
+  if (!env.ok) {
     return
   }
 
-  const notifier = createUiNotifier(ctx)
-  const confirmer = createUiConfirmer(ctx)
+  if (ctx.mode !== 'tui') {
+    return runSilentDiscoveryWorkflow(ctx, env.value, args, ui)
+  } else {
+    return runInteractiveDiscoverWorkflow(ctx, env.value, args, ui)
+  }
+}
 
-  // Phase A: progress UI only. Loader must close before confirm (Phase B).
-  // Errors are wrapped because ctx.ui.custom resolves via done() and does not reject.
+async function runSilentDiscoveryWorkflow(
+  ctx: ExtensionCommandContext,
+  env: Env,
+  args: string,
+  ui: DiscoveryUi,
+): Promise<void> {
+  const evaluationResult = await runCatchingAsync(() => evaluateDiscovery(args, env, ui, createGetApiKey(ctx)))
+  if (!evaluationResult.ok) {
+    ui.notify(formatDiscoveryFailure(evaluationResult.error), 'error')
+    return
+  }
+
+  await finalizeDiscovery(evaluationResult.value, env, ui)
+}
+
+async function runInteractiveDiscoverWorkflow(ctx: ExtensionCommandContext, env: Env, args: string, ui: DiscoveryUi) {
   const evaluationResult: Try<DiscoveryEvaluation> = await runWithStatusUi(
     ctx,
     'Discovering models...',
-    async status => await runCatchingAsync(() => evaluateDiscovery(args, env.value, status, ctx)),
+    async statusUi => await runCatchingAsync(() => evaluateDiscovery(args, env, statusUi, createGetApiKey(ctx))),
   )
 
   if (!evaluationResult.ok) {
-    notifier.notify(formatDiscoveryFailure(evaluationResult.error), 'error')
+    ui.notify(formatDiscoveryFailure(evaluationResult.error), 'error')
     return
   }
 
-  // Phases B + C: decide, optional write, final notify — outside the loader.
-  await finalizeDiscovery(evaluationResult.value, confirmer, notifier, env.value)
-}
-
-function formatDiscoveryFailure(error: unknown): string {
-  const detail = formatError(error)
-  return `Discovery failed: ${detail}`
+  await finalizeDiscovery(evaluationResult.value, env, ui, createRefreshRegistry(ctx))
 }
 
 async function runWithStatusUi<T>(
   ctx: ExtensionCommandContext,
   initialMessage: string,
-  fn: (status: StatusReporter) => Promise<T>,
+  fn: (statusUi: DiscoveryUi) => Promise<T>,
 ): Promise<T> {
   return ctx.ui.custom<T>((tui, theme, _kb, done) => {
     const loader = new RequestyStatusLoader(tui, theme, initialMessage)
-    const status = createLoaderStatusReporter(loader)
     void Promise.resolve()
-      .then(() => fn(status))
+      .then(() => fn(createTuiUi(ctx, loader)))
       .then(done)
       .catch(done)
     return loader
   })
-}
-
-async function evaluateDiscovery(
-  args: string,
-  env: Env,
-  status: StatusReporter,
-  ctx: ExtensionContext,
-): Promise<DiscoveryEvaluation> {
-  status.set('Discovering Requesty models...')
-  const dryRun = args.split(' ').includes(DRY_RUN_ARG)
-
-  const { data, provider, existingModelIds } = await getRequestyConfig(ctx.modelRegistry, env)
-  const models = await discoverModels(provider)
-  const modelsMap = new Map(models.map(m => [m.id, m]))
-
-  let diff: ModelsDiff
-  let failedCount = 0
-  let passing: ProviderModelConfig[]
-  let logNote = ''
-  let healthCheckSummary = ''
-
-  if (env.health_check_mode !== 'off') {
-    status.set(`Checking models 0/${models.length}...`)
-    const healthResults = await checkModels(provider, models, env.health_check_mode === 'full', {
-      onProgress: ({ completed, total }) => {
-        status.set(`Checking models ${completed}/${total}...`)
-      },
-    })
-    const sortedResults = healthResults.toSorted((a, b) => a.modelId.localeCompare(b.modelId))
-    failedCount = sortedResults.filter(r => !r.ok).length
-    passing = sortedResults.flatMap(r => {
-      const model = modelsMap.get(r.modelId)
-      return r.ok && model ? [model] : []
-    })
-    diff = diffModels(existingModelIds, passing)
-    healthCheckSummary = formatHealthSummary(sortedResults)
-    writeHealthCheckLog(provider, sortedResults, diff, env)
-    logNote = `Full health check log: ${env.health_check_log_path}\n`
-  } else {
-    passing = models
-    diff = diffModels(existingModelIds, passing)
-  }
-
-  return {
-    dryRun,
-    modelCount: models.length,
-    failedCount,
-    passing,
-    diff,
-    healthCheckSummary,
-    logNote,
-    data,
-  }
-}
-
-async function finalizeDiscovery(
-  evaluation: DiscoveryEvaluation,
-  confirmer: Confirmer,
-  notifier: Notifier,
-  env: Env,
-): Promise<void> {
-  const level = notificationLevel(evaluation)
-  const summary = buildDiscoverySummary(evaluation)
-
-  // Always surface the discovery result first (toast styling), then decide.
-  if (evaluation.dryRun) {
-    notifier.notify(
-      `${summary}
-Dry run: left models.json unchanged.`,
-      level,
-    )
-    return
-  }
-
-  if (evaluation.passing.length === 0) {
-    notifier.notify(
-      `${summary}
-Left models.json unchanged.`,
-      level,
-    )
-    return
-  }
-
-  notifier.notify(summary, level)
-  const { title, message } = buildConfirmPrompt(evaluation)
-  const shouldUpdate = await confirmer.confirm(title, message)
-  if (shouldUpdate) {
-    updateModelsJson(evaluation.data, evaluation.passing, env)
-    notifier.notify('Updated models.json. Run /reload to use the changes.', 'info')
-    return
-  }
-
-  notifier.notify('Left models.json unchanged.', 'info')
-}
-
-function buildDiscoverySummary(evaluation: DiscoveryEvaluation): string {
-  return [
-    `Discovered ${evaluation.modelCount} Requesty model(s).`,
-    evaluation.healthCheckSummary.trimEnd(),
-    formatModelsDiffSummary(evaluation.diff),
-    evaluation.logNote.trimEnd(),
-  ]
-    .filter(part => part.length > 0)
-    .join('\n')
-}
-
-function buildConfirmPrompt(evaluation: DiscoveryEvaluation): { title: string; message: string } {
-  const hasIdChanges = evaluation.diff.added.length > 0 || evaluation.diff.removed.length > 0
-  if (hasIdChanges) {
-    return {
-      title: `Write ${evaluation.passing.length} model(s)?`,
-      message: 'Update models.json with the discovery result above.',
-    }
-  }
-  return {
-    title: 'Refresh models.json?',
-    message: 'No model ID changes. Rewrite the file to refresh metadata anyway?',
-  }
-}
-
-function notificationLevel(evaluation: DiscoveryEvaluation): NotificationLevel {
-  if (evaluation.failedCount === 0) return 'info'
-  if (evaluation.failedCount < evaluation.modelCount) return 'warning'
-  return 'error'
-}
-
-function getArgumentCompletions(prefix: string): AutocompleteItem[] {
-  const options = [
-    {
-      value: DRY_RUN_ARG,
-      label: DRY_RUN_ARG,
-      description: 'Preview discovery without offering to write models.json',
-    },
-  ]
-  if (!prefix) return options
-  return options.filter(o => o.value.toLowerCase().startsWith(prefix.toLowerCase()))
-}
-
-function createUiNotifier(ctx: ExtensionContext): Notifier {
-  return {
-    notify(message: string, level?: NotificationLevel) {
-      const prefixedMessage = `${COMMAND_NAME}: ${message}`
-      ctx.ui.notify(prefixedMessage, level)
-    },
-  }
-}
-
-function createUiConfirmer(ctx: ExtensionContext): Confirmer {
-  return {
-    confirm(title, message) {
-      return ctx.ui.confirm(title, message)
-    },
-  }
-}
-
-function createLoaderStatusReporter(loader: RequestyStatusLoader): StatusReporter {
-  return {
-    set(message: string) {
-      loader.setMessage(message)
-    },
-  }
 }
 
 async function updateUsageStatus(ctx: ExtensionContext, env: Try<Env>): Promise<void> {
@@ -305,7 +122,7 @@ async function updateUsageStatus(ctx: ExtensionContext, env: Try<Env>): Promise<
       ctx.ui.setStatus(USAGE_STATUS_KEY, undefined)
       return
     }
-    const info = await fetchUsageStatus(ctx.modelRegistry, env.value)
+    const info = await fetchUsageStatus(createGetApiKey(ctx), env.value)
     if (latestToken !== token) return
     ctx.ui.setStatus(USAGE_STATUS_KEY, formatUsageStatus(info))
   } catch {
@@ -325,19 +142,15 @@ export function formatUsageStatus(info: ApiKeyInfo): string {
 
 let lastFetched: { value: ApiKeyInfo; time: Date } | undefined
 
-async function fetchUsageStatus(registry: ModelRegistry, env: Env): Promise<ApiKeyInfo> {
+async function fetchUsageStatus(getApiKey: GetApiKey, env: Env): Promise<ApiKeyInfo> {
   const now = new Date()
   if (lastFetched?.time && now.getTime() - lastFetched.time.getTime() < 2000) {
     return lastFetched.value
   }
-  const { provider } = await getRequestyConfig(registry, env)
+  const { provider } = await getRequestyConfig(getApiKey, env)
   const value = await fetchApiUsage(provider)
   lastFetched = { value, time: new Date() }
   return value
-}
-
-function formatError(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /**
@@ -347,25 +160,39 @@ export function resetUsageStatusCache(): void {
   lastFetched = undefined
 }
 
-function runCatching<T>(fn: () => T): Try<T> {
-  try {
-    return { ok: true, value: fn() }
-  } catch (error) {
-    return { ok: false, error }
+/** TUI adapter: routes the workflow's UI needs to Pi's ctx.ui. */
+export function createTuiUi(ctx: ExtensionContext, loader?: RequestyStatusLoader): DiscoveryUi {
+  return {
+    notify: (message, level) => ctx.ui.notify(`${COMMAND_NAME}: ${message}`, level),
+    confirm: (title, message) => ctx.ui.confirm(title, message),
+    setStatus: message => loader?.setMessage(message),
   }
 }
 
-async function runCatchingAsync<T>(fn: () => Promise<T>): Promise<Try<T>> {
-  try {
-    return { ok: true, value: await fn() }
-  } catch (error) {
-    return { ok: false, error }
+/**
+ * Console adapter for non-interactive modes. Always confirms: print mode is
+ * non-interactive, so the write proceeds without a confirmation dialog.
+ */
+export function createConsoleUi(): DiscoveryUi {
+  return {
+    notify: (message, level) => console.log(`[${level}] ${message}`),
+    // eslint-disable-next-line @typescript-eslint/require-await -- must match the DiscoveryUi promise signature
+    confirm: async () => true,
+    setStatus: message => console.log(message),
   }
 }
 
-function complainOnBrokenEnv(ctx: ExtensionContext, env: Try<Env>) {
-  if (!env.ok) {
-    const notifier = createUiNotifier(ctx)
-    notifier.notify(`failed to load env: ${formatError(env.error)}`, 'error')
-  }
+/** Re-reads models.json through Pi's model registry so new models are usable without /reload. */
+export function createRefreshRegistry(ctx: ExtensionContext): RefreshModelsRegistry {
+  return () =>
+    ctx.modelRegistry.refresh({ allowNetwork: false }).then(result => {
+      if (result.aborted || result.errors.size > 0) {
+        const detail = [...result.errors.entries()].map(([id, error]) => `${id}: ${error.message}`).join(', ')
+        throw new Error(detail || 'refresh aborted')
+      }
+    })
+}
+
+function createGetApiKey(ctx: ExtensionContext): GetApiKey {
+  return providerId => ctx.modelRegistry.getApiKeyForProvider(providerId)
 }

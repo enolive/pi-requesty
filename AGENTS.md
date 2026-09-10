@@ -30,7 +30,8 @@ Do **not** add a build/transpile step unless explicitly requested.
 
 - index.ts – package-facing Pi extension entrypoint; re-exports src/index.ts
 - src/
-  - index.ts — Pi command registration and high-level command flow
+  - index.ts — Pi command registration, event wiring, and ctx-dependent UI adapters for the discovery workflow
+  - discovery.ts — pure discovery workflow logic (evaluate, finalize, argument completions)
   - env.ts — environment variables and paths to Pi
   - models-json.ts — read/validate/update models.json
   - requesty-api.ts — Requesty models library API
@@ -59,6 +60,10 @@ Do **not** add a build/transpile step unless explicitly requested.
 - Keep all environment/path access centralized in `src/env.ts`.
 - Keep the Pi command name centralized in `src/index.ts` as `COMMAND_NAME`.
 - `REQUESTY_HEALTH_CHECK_MODE` is validated as `off | basic | full`.
+- `docs/DECISIONS.adoc` is for design decisions with non-obvious trade-offs (why X over Y), not implementation
+  details. Do not add a record there for ordinary refactors, naming, or structure changes — if in doubt, leave it out.
+- Keep ports/adapters minimal: one seam per actual variation axis. Prefer a single `DiscoveryUi` port with a tui and a
+  console adapter over one interface per concern; prefer bare function types (`GetApiKey`) over single-method objects.
 - The main doc entrypoint for this project is `README.adoc`. Any possibly existing *README.md* is just auto-generated
   and should not be edited.
 
