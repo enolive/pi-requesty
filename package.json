@@ -1,6 +1,6 @@
 {
   "name": "pi-requesty-discover",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Discover available Requesty models for the Pi Coding Agent",
   "repository": {
     "type": "git",
