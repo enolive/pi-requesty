@@ -270,6 +270,8 @@ describe('postChatCompletion', () => {
     expect(result).toMatchObject({ ok: false })
     expect(result.ok).toBe(false)
     expect(result.error).not.toMatch(/^Timed out/)
+    expect(result.stack).toBeTypeOf('string')
+    expect(result.stack).not.toBe('')
   })
 
   it('returns failure for stream emitting an error object without content', async () => {
@@ -391,6 +393,26 @@ describe('checkModels', () => {
         }),
       ]),
     )
+  })
+
+  it('propagates the stack trace from the reasoning/tool check failure', async () => {
+    let requestNumber = 0
+    server.use(
+      http.post(completionsEndpoint, () => {
+        requestNumber++
+        if (requestNumber > 1) {
+          return HttpResponse.error()
+        }
+        return sseResponse([positiveStreamChunk])
+      }),
+    )
+    const models = [createModel({ id: 'requesty/reasoning-model', reasoning: true })]
+
+    const results = await checkModels(PROVIDER, models, true)
+
+    expect(results[0]?.ok).toBe(false)
+    expect(results[0]?.stack).toBeTypeOf('string')
+    expect(results[0]?.stack).not.toBe('')
   })
 
   it('does not call reasoning/tool check for non-reasoning models', async () => {
@@ -630,6 +652,56 @@ describe('health summary and log output', () => {
     const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
 
     writeHealthCheckLog(PROVIDER, partialFailureResults, { added: [], removed: [] }, env)
+
+    const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
+    expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
+  })
+
+  it('includes the stack trace for failed models in the log', async () => {
+    const results = [
+      createHealthCheckResult({
+        modelId: 'requesty/network-error-model',
+        ok: false,
+        error: 'fetch failed',
+        url: 'https://router.requesty.ai/v1/chat/completions',
+        stack: 'Error: fetch failed\n    at fetch (node:internal)\n    at postChatCompletion',
+      }),
+      createHealthCheckResult({
+        modelId: 'requesty/http-error-model',
+        ok: false,
+        error: 'HTTP 500 Internal Server Error',
+      }),
+    ]
+    const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
+
+    writeHealthCheckLog(PROVIDER, results, { added: [], removed: [] }, env)
+
+    const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
+    expect(log).toContain('Stack trace:')
+    expect(log).toContain('Error: fetch failed\n    at fetch (node:internal)\n    at postChatCompletion')
+    // models without a stack must not emit a Stack trace section
+    const httpBlock = log.slice(log.indexOf('requesty/http-error-model'))
+    expect(httpBlock).not.toContain('Stack trace:')
+  })
+
+  it('writes log file including the stack trace for failed models', async () => {
+    const results = [
+      createHealthCheckResult({
+        modelId: 'requesty/network-error-model',
+        ok: false,
+        error: 'fetch failed',
+        url: 'https://router.requesty.ai/v1/chat/completions',
+        stack: 'Error: fetch failed\n    at fetch (node:internal)\n    at postChatCompletion',
+      }),
+      createHealthCheckResult({
+        modelId: 'requesty/http-error-model',
+        ok: false,
+        error: 'HTTP 500 Internal Server Error',
+      }),
+    ]
+    const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
+
+    writeHealthCheckLog(PROVIDER, results, { added: [], removed: [] }, env)
 
     const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
     expect(normalizeHealthCheckLog(log)).toMatchSnapshot()

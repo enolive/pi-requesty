@@ -29,6 +29,7 @@ export type HealthCheckResult = {
   latencyMs: number
   error?: string
   url?: string
+  stack?: string
 }
 
 type ModelCheckResult = Omit<HealthCheckResult, 'modelId'>
@@ -132,6 +133,7 @@ export function writeHealthCheckLog(
         ...(result.url ? [`URL: ${result.url}`] : []),
         'Error:',
         result.error?.trim() || 'Unknown error',
+        ...(result.stack ? ['Stack trace:', result.stack.trim()] : []),
         '',
         '---',
         '',
@@ -193,6 +195,7 @@ export async function postChatCompletion(
         error: isTimeoutError(err)
           ? `Timed out after ${attempts} attempt(s); per-attempt timeout is ${healthCheckOptions.timeoutMs / 1000}s`
           : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
       }
     }
   }
@@ -290,6 +293,7 @@ async function checkModel(
       ok: false,
       latencyMs: reasoningResult.latencyMs,
       url: reasoningResult.url,
+      stack: reasoningResult.stack,
       error: `Reasoning/tool check failed: ${reasoningResult.error}`,
     }
   }

@@ -132,6 +132,42 @@ Unknown error
 "
 `;
 
+exports[`health summary and log output > writes log file including the stack trace for failed models 1`] = `
+"Requesty health check log
+Timestamp: <timestamp>
+Provider: requesty-export
+Base URL: https://router.requesty.ai/v1
+Total: 2
+Passed: 0
+Failed: 2
+
+No added models.
+No removed models.
+
+Failed models:
+
+Model: requesty/network-error-model
+Latency: 123ms
+URL: https://router.requesty.ai/v1/chat/completions
+Error:
+fetch failed
+Stack trace:
+Error: fetch failed
+    at fetch (node:internal)
+    at postChatCompletion
+
+---
+
+Model: requesty/http-error-model
+Latency: 123ms
+Error:
+HTTP 500 Internal Server Error
+
+---
+
+"
+`;
+
 exports[`health summary and log output > writes log file without any errors 1`] = `
 "Requesty health check log
 Timestamp: <timestamp>
