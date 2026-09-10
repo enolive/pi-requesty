@@ -79,6 +79,11 @@ Example:
 }
 ----
 
+TIP: The `baseUrl` from `models.json` is used as-is by default.
+If you set it to the literal value `$REQUESTY_BASE_URL`, the extension resolves the `REQUESTY_BASE_URL` environment variable at runtime instead.
+If the placeholder is set but `REQUESTY_BASE_URL` is unset or empty, the extension errors out.
+Any other value is used verbatim (with trailing slashes trimmed).
+
 IMPORTANT: Health checks are designed to use only a few tokens, but they still make real Requesty API calls and **will** consume credits.
 
 On startup, the extension fetches `<baseUrl>/models` using the configured `apiKey` as the bearer token and registers discovered and healthy models with Pi.
@@ -88,6 +93,18 @@ On startup, the extension fetches `<baseUrl>/models` using the configured `apiKe
 [cols="1,1,1,1,2",options="header"]
 |===
 | Name | Required | Type | Default | Meaning
+
+| `REQUESTY_BASE_URL`
+| no
+| `string`
+| (unset, falls back to the `baseUrl` in `models.json`)
+| Requesty Base URL used for model discovery and health checks; set `baseUrl` in `models.json` to `"$REQUESTY_BASE_URL"` to use this value.
+
+| `REQUESTY_MANAGE_BASE_URL`
+| no
+| `string`
+| (unset, falls back to `https://api-v2.requesty.ai/v1/manage`)
+| Base URL for the Requesty management API used to read API-key usage for the footer status line.
 
 | `REQUESTY_PROVIDER_ID`
 | no

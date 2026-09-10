@@ -6,6 +6,7 @@ import { ZodError } from 'zod'
 
 const providerConfig = {
   baseUrl: 'https://router.requesty.ai/v1',
+  manageBaseUrl: 'https://api-v2.requesty.ai/v1/manage',
   apiKey: 'test-key',
 }
 
@@ -198,6 +199,7 @@ describe('discoverModels', () => {
 
 describe('fetchApiUsage', () => {
   const manageEndpoint = 'https://api-v2.requesty.ai/v1/manage/apikey/self'
+  const customManageEndpoint = 'https://custom.requesty.example/v1/manage/apikey/self'
 
   function apiKeySelfResponse(data: Record<string, unknown>) {
     return HttpResponse.json(data)
@@ -290,5 +292,19 @@ describe('fetchApiUsage', () => {
     const fetch = () => fetchApiUsage(providerConfig, { timeoutMs: 5 })
 
     await expect(fetch).rejects.toThrow('The operation was aborted due to timeout')
+  })
+
+  it('uses REQUESTY_MANAGE_BASE_URL when provided on the provider', async () => {
+    let calledUrl: string | null = null
+    server.use(
+      http.get(customManageEndpoint, ({ request }) => {
+        calledUrl = request.url
+        return apiKeySelfResponse({ name: 'Playground', monthly_spend: '0', monthly_limit: '0' })
+      }),
+    )
+
+    await fetchApiUsage({ ...providerConfig, manageBaseUrl: 'https://custom.requesty.example/v1/manage' })
+
+    expect(calledUrl).toBe(customManageEndpoint)
   })
 })

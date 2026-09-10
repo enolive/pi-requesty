@@ -57,6 +57,7 @@ describe('postChatCompletion', () => {
     expect(result).toMatchObject({
       ok: false,
       error: 'HTTP 502 Bad Gateway: bad gateway',
+      url: 'https://router.requesty.ai/v1/chat/completions',
     })
   })
 
@@ -269,6 +270,8 @@ describe('postChatCompletion', () => {
     expect(result).toMatchObject({ ok: false })
     expect(result.ok).toBe(false)
     expect(result.error).not.toMatch(/^Timed out/)
+    expect(result.stack).toBeTypeOf('string')
+    expect(result.stack).not.toBe('')
   })
 
   it('returns failure for stream emitting an error object without content', async () => {
@@ -289,9 +292,9 @@ describe('postChatCompletion', () => {
   it('retries timeout failures', async () => {
     let requestCount = 0
     server.use(
-      http.post(completionsEndpoint, async () => {
+      http.post(completionsEndpoint, async ({ request }) => {
         requestCount++
-        await delay(50)
+        await delayUntilAborted(request.signal, 50)
         return sseResponse([positiveStreamChunk])
       }),
     )
@@ -305,6 +308,7 @@ describe('postChatCompletion', () => {
     expect(result).toMatchObject({
       ok: false,
       error: 'Timed out after 2 attempt(s); per-attempt timeout is 0.001s',
+      url: 'https://router.requesty.ai/v1/chat/completions',
     })
     expect(requestCount).toBe(2)
   })
@@ -312,9 +316,9 @@ describe('postChatCompletion', () => {
   it('retries timeout failures without delay', async () => {
     let requestCount = 0
     server.use(
-      http.post(completionsEndpoint, async () => {
+      http.post(completionsEndpoint, async ({ request }) => {
         requestCount++
-        await delay(50)
+        await delayUntilAborted(request.signal, 50)
         return sseResponse([positiveStreamChunk])
       }),
     )
@@ -385,9 +389,30 @@ describe('checkModels', () => {
           error: "Reasoning/tool check failed: HTTP 418 I'm a Teapot: BAM",
           modelId: 'requesty/reasoning-model',
           ok: false,
+          url: 'https://router.requesty.ai/v1/chat/completions',
         }),
       ]),
     )
+  })
+
+  it('propagates the stack trace from the reasoning/tool check failure', async () => {
+    let requestNumber = 0
+    server.use(
+      http.post(completionsEndpoint, () => {
+        requestNumber++
+        if (requestNumber > 1) {
+          return HttpResponse.error()
+        }
+        return sseResponse([positiveStreamChunk])
+      }),
+    )
+    const models = [createModel({ id: 'requesty/reasoning-model', reasoning: true })]
+
+    const results = await checkModels(PROVIDER, models, true)
+
+    expect(results[0]?.ok).toBe(false)
+    expect(results[0]?.stack).toBeTypeOf('string')
+    expect(results[0]?.stack).not.toBe('')
   })
 
   it('does not call reasoning/tool check for non-reasoning models', async () => {
@@ -422,6 +447,7 @@ describe('checkModels', () => {
     expect(results[0]).toMatchObject({
       modelId: 'requesty/failing-model',
       ok: false,
+      url: 'https://router.requesty.ai/v1/chat/completions',
     })
   })
 
@@ -555,6 +581,8 @@ describe('health summary and log output', () => {
     health_check_mode: 'basic',
     models_json_path: '',
     provider_id: DEFAULT_PROVIDER_ID,
+    requesty_base_url: '',
+    requesty_manage_base_url: '',
   }
 
   beforeEach(async () => {
@@ -592,13 +620,29 @@ describe('health summary and log output', () => {
     expect(summaries).toMatchSnapshot()
   })
 
-  it('writes log file', async () => {
+  it('includes a short error description for each failed model in the summary', () => {
+    const results = [
+      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
+      createHealthCheckResult({
+        modelId: 'requesty/failing-model',
+        ok: false,
+        error: 'HTTP 500 Internal Server Error',
+      }),
+    ]
+
+    const summary = formatHealthSummary(results)
+
+    expect(summary).toContain('- requesty/failing-model: HTTP 500 Internal Server Error')
+  })
+
+  it('writes log file including the request URL for each failed model', async () => {
     const partialFailureResults = [
       createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
       createHealthCheckResult({
         modelId: 'requesty/failing-model',
         ok: false,
         error: 'HTTP 500 Internal Server Error',
+        url: 'https://router.requesty.ai/v1/chat/completions',
       }),
       createHealthCheckResult({
         modelId: 'requesty/failing-model-unknown-error',
@@ -608,6 +652,56 @@ describe('health summary and log output', () => {
     const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
 
     writeHealthCheckLog(PROVIDER, partialFailureResults, { added: [], removed: [] }, env)
+
+    const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
+    expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
+  })
+
+  it('includes the stack trace for failed models in the log', async () => {
+    const results = [
+      createHealthCheckResult({
+        modelId: 'requesty/network-error-model',
+        ok: false,
+        error: 'fetch failed',
+        url: 'https://router.requesty.ai/v1/chat/completions',
+        stack: 'Error: fetch failed\n    at fetch (node:internal)\n    at postChatCompletion',
+      }),
+      createHealthCheckResult({
+        modelId: 'requesty/http-error-model',
+        ok: false,
+        error: 'HTTP 500 Internal Server Error',
+      }),
+    ]
+    const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
+
+    writeHealthCheckLog(PROVIDER, results, { added: [], removed: [] }, env)
+
+    const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
+    expect(log).toContain('Stack trace:')
+    expect(log).toContain('Error: fetch failed\n    at fetch (node:internal)\n    at postChatCompletion')
+    // models without a stack must not emit a Stack trace section
+    const httpBlock = log.slice(log.indexOf('requesty/http-error-model'))
+    expect(httpBlock).not.toContain('Stack trace:')
+  })
+
+  it('writes log file including the stack trace for failed models', async () => {
+    const results = [
+      createHealthCheckResult({
+        modelId: 'requesty/network-error-model',
+        ok: false,
+        error: 'fetch failed',
+        url: 'https://router.requesty.ai/v1/chat/completions',
+        stack: 'Error: fetch failed\n    at fetch (node:internal)\n    at postChatCompletion',
+      }),
+      createHealthCheckResult({
+        modelId: 'requesty/http-error-model',
+        ok: false,
+        error: 'HTTP 500 Internal Server Error',
+      }),
+    ]
+    const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
+
+    writeHealthCheckLog(PROVIDER, results, { added: [], removed: [] }, env)
 
     const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
     expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
@@ -692,4 +786,30 @@ function sseRawResponse(body: string) {
 
 function sseResponse(chunks: unknown[]) {
   return sseRawResponse(sseBody(chunks))
+}
+
+/**
+ * Resolves after `ms`, but rejects with the request's abort signal reason if it fires first.
+ * This makes AbortSignal.timeout deterministically abort MSW-intercepted requests, which `delay()`
+ * from msw does not honor on its own.
+ */
+function delayUntilAborted(signal: AbortSignal, ms: number): Promise<void> {
+  const rejectWithReason = (reject: (reason: Error) => void) => {
+    reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'))
+  }
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      rejectWithReason(reject)
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        rejectWithReason(reject)
+      },
+      { once: true },
+    )
+  })
 }

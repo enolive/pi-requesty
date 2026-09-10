@@ -27,6 +27,7 @@ export type CapturedEventHandler = (...args: unknown[]) => unknown
 export function createFakePi() {
   const commands = new Map<string, RegisteredCommandOptions>()
   const eventHandlers = new Map<string, CapturedEventHandler>()
+  const providers = new Map<string, unknown>()
 
   const on: ExtensionAPI['on'] = (event, handler) => {
     eventHandlers.set(event, handler as CapturedEventHandler)
@@ -36,10 +37,13 @@ export function createFakePi() {
     registerCommand(name: string, command: RegisteredCommandOptions) {
       commands.set(name, command)
     },
+    registerProvider(name: string, config: unknown) {
+      providers.set(name, config)
+    },
     on,
   } as unknown as ExtensionAPI
 
-  return { pi, commands, eventHandlers }
+  return { pi, commands, eventHandlers, providers }
 }
 
 type RefreshOptions = Parameters<ModelRegistry['refresh']>[0]

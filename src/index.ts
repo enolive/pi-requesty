@@ -29,6 +29,12 @@ let latestToken: object = {}
 export default function (pi: ExtensionAPI) {
   const env = runCatching(() => getEnv())
 
+  if (env.ok) {
+    pi.registerProvider('requesty-export', {
+      baseUrl: env.value.requesty_base_url,
+    })
+  }
+
   pi.registerCommand(COMMAND_NAME, {
     description: 'Dynamically discover Requesty models, run health checks, and update the local models.json.',
     getArgumentCompletions,

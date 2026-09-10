@@ -5,7 +5,9 @@ import { z } from 'zod'
 import { type Env, getEnv } from './env'
 
 const DEFAULT_BASE_URL = 'https://router.requesty.ai/v1'
+const DEFAULT_MANAGE_URL = 'https://api-v2.requesty.ai/v1/manage'
 const DEFAULT_NAME = 'Requesty'
+const REQUESTY_BASE_URL_PLACEHOLDER = '$REQUESTY_BASE_URL'
 
 /** Resolves the API key for a provider through Pi's model registry. */
 export type GetApiKey = (providerId: string) => Promise<string | undefined>
@@ -32,6 +34,7 @@ type ModelsJsonProvider = z.infer<typeof ProviderSchema>
 export type RequestyProvider = ModelsJsonProvider & {
   name: string
   baseUrl: string
+  manageBaseUrl: string
   apiKey: string
 }
 
@@ -64,7 +67,8 @@ export async function getRequestyConfig(getApiKey: GetApiKey, envConfig: Env = g
     provider: {
       ...provider,
       name: nonEmptyString(provider.name) ?? DEFAULT_NAME,
-      baseUrl: normalizeBaseUrl(nonEmptyString(provider.baseUrl) ?? DEFAULT_BASE_URL),
+      baseUrl: resolveBaseUrl(nonEmptyString(provider.baseUrl) ?? DEFAULT_BASE_URL, envConfig.requesty_base_url),
+      manageBaseUrl: resolveEnvUrl(envConfig.requesty_manage_base_url, DEFAULT_MANAGE_URL),
       apiKey,
     },
   }
@@ -111,8 +115,25 @@ export function updateModelsJson(data: ModelsJson, models: ProviderModelConfig[]
   writeModelsJson(data, envConfig)
 }
 
+function resolveBaseUrl(baseUrl: string, envBaseUrl: string): string {
+  if (baseUrl === REQUESTY_BASE_URL_PLACEHOLDER) {
+    if (envBaseUrl.length === 0) {
+      throw new Error(
+        `baseUrl is set to ${REQUESTY_BASE_URL_PLACEHOLDER} but REQUESTY_BASE_URL is not set in the environment`,
+      )
+    }
+    return normalizeBaseUrl(envBaseUrl)
+  }
+  return normalizeBaseUrl(baseUrl)
+}
+
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '')
+}
+
+function resolveEnvUrl(envUrl: string, fallback: string): string {
+  const value = nonEmptyString(envUrl)
+  return normalizeBaseUrl(value ?? fallback)
 }
 
 function readModelsJson(envConfig: Env = getEnv()): ModelsJson {

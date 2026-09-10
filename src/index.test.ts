@@ -37,6 +37,7 @@ const HEALTH_CHECK_LOG_PATH = '/tmp/pi-requesty-home/.pi/agent/requesty-health-c
 const provider = {
   name: 'Requesty',
   baseUrl: 'https://router.requesty.ai/v1',
+  manageBaseUrl: 'https://api-v2.requesty.ai/v1/manage',
   apiKey: 'test-key',
 }
 
@@ -612,6 +613,8 @@ function mockEnv(getEnvError?: unknown): Try<Env> {
     models_json_path: MODELS_JSON_PATH,
     health_check_log_path: HEALTH_CHECK_LOG_PATH,
     provider_id: REQUESTY_PROVIDER_ID,
+    requesty_base_url: provider.baseUrl,
+    requesty_manage_base_url: provider.manageBaseUrl,
     health_check_mode: 'basic',
   }
   const getEnv = vi.mocked(EnvModule.getEnv)

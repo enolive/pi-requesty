@@ -71,12 +71,12 @@ exports[`checkModels > calls basic completion check once per model 1`] = `
 exports[`health summary and log output > formats summaries 1`] = `
 {
   "allFailed": "Health check: 0 OK, 2 failed:
-- requesty/model-a
-- requesty/model-b
+- requesty/model-a: first failure
+- requesty/model-b: second failure
 ",
   "allPassed": "Health check: all 2 OK.",
   "partialFailure": "Health check: 1 OK, 1 failed:
-- requesty/failing-model
+- requesty/failing-model: HTTP 500 Internal Server Error
 ",
 }
 `;
@@ -100,7 +100,7 @@ No failed models.
 "
 `;
 
-exports[`health summary and log output > writes log file 1`] = `
+exports[`health summary and log output > writes log file including the request URL for each failed model 1`] = `
 "Requesty health check log
 Timestamp: <timestamp>
 Provider: requesty-export
@@ -116,6 +116,7 @@ Failed models:
 
 Model: requesty/failing-model
 Latency: 123ms
+URL: https://router.requesty.ai/v1/chat/completions
 Error:
 HTTP 500 Internal Server Error
 
@@ -125,6 +126,42 @@ Model: requesty/failing-model-unknown-error
 Latency: 123ms
 Error:
 Unknown error
+
+---
+
+"
+`;
+
+exports[`health summary and log output > writes log file including the stack trace for failed models 1`] = `
+"Requesty health check log
+Timestamp: <timestamp>
+Provider: requesty-export
+Base URL: https://router.requesty.ai/v1
+Total: 2
+Passed: 0
+Failed: 2
+
+No added models.
+No removed models.
+
+Failed models:
+
+Model: requesty/network-error-model
+Latency: 123ms
+URL: https://router.requesty.ai/v1/chat/completions
+Error:
+fetch failed
+Stack trace:
+Error: fetch failed
+    at fetch (node:internal)
+    at postChatCompletion
+
+---
+
+Model: requesty/http-error-model
+Latency: 123ms
+Error:
+HTTP 500 Internal Server Error
 
 ---
 
