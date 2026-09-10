@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Env } from './env'
 import { DEFAULT_PROVIDER_ID } from './env'
-import { ApiKeyProvider, diffModels, formatModelsDiffSummary, getRequestyConfig, updateModelsJson } from './models-json'
+import { diffModels, formatModelsDiffSummary, GetApiKey, getRequestyConfig, updateModelsJson } from './models-json'
 import { createTempDirectory, type TempDirectory } from '../test/helpers/temp-agent'
 
 const PROVIDER_ID = DEFAULT_PROVIDER_ID
@@ -25,27 +25,27 @@ describe('getRequestyConfig', () => {
 
   it('throws if models.json does not exist', async () => {
     const envConfig = createTestEnv(tempDirectory)
-    const apiKeyProvider = createApiKeyProvider()
+    const getApiKey = createGetApiKey()
 
-    const readConfig = () => getRequestyConfig(apiKeyProvider, envConfig)
+    const readConfig = () => getRequestyConfig(getApiKey, envConfig)
 
     await expect(readConfig).rejects.toThrow(`models.json does not exist`)
   })
 
   it('throws if JSON is invalid', async () => {
     const envConfig = await createEnvWithModelsJsonContent(tempDirectory, '{')
-    const apiKeyProvider = createApiKeyProvider()
+    const getApiKey = createGetApiKey()
 
-    const readConfig = () => getRequestyConfig(apiKeyProvider, envConfig)
+    const readConfig = () => getRequestyConfig(getApiKey, envConfig)
 
     await expect(readConfig).rejects.toThrow()
   })
 
   it('throws if schema is invalid', async () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, { providers: [] })
-    const apiKeyProvider = createApiKeyProvider()
+    const getApiKey = createGetApiKey()
 
-    const readConfig = () => getRequestyConfig(apiKeyProvider, envConfig)
+    const readConfig = () => getRequestyConfig(getApiKey, envConfig)
 
     await expect(readConfig).rejects.toThrow(`${envConfig.models_json_path} is invalid`)
   })
@@ -54,9 +54,9 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: `these-are-not-the-droids-you-are-looking-for` } },
     })
-    const apiKeyProvider = createApiKeyProvider('my_api_key')
+    const getApiKey = createGetApiKey('my_api_key')
 
-    const readConfig = await getRequestyConfig(apiKeyProvider, envConfig)
+    const readConfig = await getRequestyConfig(getApiKey, envConfig)
 
     expect(readConfig.provider.apiKey).toEqual('my_api_key')
   })
@@ -65,9 +65,9 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
-    const apiKeyProvider = createApiKeyProvider(null)
+    const getApiKey = createGetApiKey(null)
 
-    const readConfig = () => getRequestyConfig(apiKeyProvider, envConfig)
+    const readConfig = () => getRequestyConfig(getApiKey, envConfig)
 
     await expect(readConfig).rejects.toThrow(`No API key found for provider ${PROVIDER_ID}`)
   })
@@ -76,9 +76,9 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { other: { apiKey: 'models-json-key' } },
     })
-    const apiKeyProvider = createApiKeyProvider()
+    const getApiKey = createGetApiKey()
 
-    const readConfig = () => getRequestyConfig(apiKeyProvider, envConfig)
+    const readConfig = () => getRequestyConfig(getApiKey, envConfig)
 
     await expect(readConfig).rejects.toThrow(`${envConfig.models_json_path} does not define providers.${PROVIDER_ID}`)
   })
@@ -87,9 +87,9 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
-    const apiKeyProvider = createApiKeyProvider()
+    const getApiKey = createGetApiKey()
 
-    const config = await getRequestyConfig(apiKeyProvider, envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.provider.name).toBe('Requesty')
   })
@@ -98,9 +98,9 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
-    const apiKeyProvider = createApiKeyProvider()
+    const getApiKey = createGetApiKey()
 
-    const config = await getRequestyConfig(apiKeyProvider, envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.provider.baseUrl).toBe('https://router.requesty.ai/v1')
   })
@@ -114,9 +114,9 @@ describe('getRequestyConfig', () => {
         },
       },
     })
-    const apiKeyProvider = createApiKeyProvider()
+    const getApiKey = createGetApiKey()
 
-    const config = await getRequestyConfig(apiKeyProvider, envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.provider.baseUrl).toBe('https://router.requesty.ai/v1')
   })
@@ -130,9 +130,9 @@ describe('getRequestyConfig', () => {
         },
       },
     })
-    const apiKeyProvider = createApiKeyProvider()
+    const getApiKey = createGetApiKey()
 
-    const config = await getRequestyConfig(apiKeyProvider, envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.existingModelIds).toEqual(['requesty/model-a', 'requesty/model-b'])
   })
@@ -141,9 +141,9 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
-    const apiKeyProvider = createApiKeyProvider()
+    const getApiKey = createGetApiKey()
 
-    const config = await getRequestyConfig(apiKeyProvider, envConfig)
+    const config = await getRequestyConfig(getApiKey, envConfig)
 
     expect(config.existingModelIds).toEqual([])
   })
@@ -207,8 +207,8 @@ describe('updateModelsJson', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key', models: [] } },
     })
-    const apiKeyProvider = createApiKeyProvider()
-    const data = (await getRequestyConfig(apiKeyProvider, envConfig)).data
+    const getApiKey = createGetApiKey()
+    const data = (await getRequestyConfig(getApiKey, envConfig)).data
     const models = [createModel({ id: 'requesty/model-a', name: 'Model A' })]
 
     updateModelsJson(data, models, envConfig)
@@ -231,8 +231,8 @@ describe('updateModelsJson', () => {
         },
       },
     })
-    const apiKeyProvider = createApiKeyProvider()
-    const data = (await getRequestyConfig(apiKeyProvider, envConfig)).data
+    const getApiKey = createGetApiKey()
+    const data = (await getRequestyConfig(getApiKey, envConfig)).data
 
     updateModelsJson(data, [createModel()], envConfig)
 
@@ -259,8 +259,8 @@ describe('updateModelsJson', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: originalRequestyProvider },
     })
-    const apiKeyProvider = createApiKeyProvider()
-    const data = (await getRequestyConfig(apiKeyProvider, envConfig)).data
+    const getApiKey = createGetApiKey()
+    const data = (await getRequestyConfig(getApiKey, envConfig)).data
     const models = [createModel(), createModel(), createModel()]
 
     updateModelsJson(data, models, envConfig)
@@ -281,7 +281,7 @@ describe('updateModelsJson', () => {
         anthropic: originalAnthropicProvider,
       },
     })
-    const registry = createApiKeyProvider()
+    const registry = createGetApiKey()
     const data = (await getRequestyConfig(registry, envConfig)).data
     const models = [createModel()]
 
@@ -350,8 +350,6 @@ function createModel(overrides: Partial<ProviderModelConfig> = {}): ProviderMode
   }
 }
 
-function createApiKeyProvider(apiKey: string | null = 'test-api-key'): ApiKeyProvider {
-  return {
-    getApiKey: () => Promise.resolve(apiKey ?? undefined),
-  }
+function createGetApiKey(apiKey: string | null = 'test-api-key'): GetApiKey {
+  return () => Promise.resolve(apiKey ?? undefined)
 }

@@ -1,9 +1,9 @@
 import { ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 import { type Env } from './env'
 import {
-  ApiKeyProvider,
   diffModels,
   formatModelsDiffSummary,
+  GetApiKey,
   getRequestyConfig,
   type ModelsDiff,
   ModelsJson,
@@ -22,21 +22,14 @@ interface AutocompleteItem {
 
 export type NotificationLevel = 'info' | 'warning' | 'error'
 
-export type Notifier = {
+/** Everything the discovery workflow needs from the UI. One port, two adapters (tui/console) in index.ts. */
+export type DiscoveryUi = {
   notify(message: string, level: NotificationLevel): void
-}
-
-export type Confirmer = {
   confirm(title: string, message: string): Promise<boolean>
+  setStatus(message: string): void
 }
 
-export type Refresher = {
-  refresh(): Promise<void>
-}
-
-export type StatusReporter = {
-  set(message: string): void
-}
+export type RefreshModelsRegistry = () => Promise<void>
 
 export type DiscoveryEvaluation = {
   dryRun: boolean
@@ -59,13 +52,13 @@ export function formatDiscoveryFailure(error: unknown): string {
 export async function evaluateDiscovery(
   args: string,
   env: Env,
-  status: StatusReporter,
-  apiKeyProvider: ApiKeyProvider,
+  ui: DiscoveryUi,
+  getApiKey: GetApiKey,
 ): Promise<DiscoveryEvaluation> {
-  status.set('Discovering Requesty models...')
+  ui.setStatus('Discovering Requesty models...')
   const dryRun = args.split(' ').includes(DRY_RUN_ARG)
 
-  const { data, provider, existingModelIds } = await getRequestyConfig(apiKeyProvider, env)
+  const { data, provider, existingModelIds } = await getRequestyConfig(getApiKey, env)
   const models = await discoverModels(provider)
   const modelsMap = new Map(models.map(m => [m.id, m]))
 
@@ -76,10 +69,10 @@ export async function evaluateDiscovery(
   let healthCheckSummary = ''
 
   if (env.health_check_mode !== 'off') {
-    status.set(`Checking models 0/${models.length}...`)
+    ui.setStatus(`Checking models 0/${models.length}...`)
     const healthResults = await checkModels(provider, models, env.health_check_mode === 'full', {
       onProgress: ({ completed, total }) => {
-        status.set(`Checking models ${completed}/${total}...`)
+        ui.setStatus(`Checking models ${completed}/${total}...`)
       },
     })
     const sortedResults = healthResults.toSorted((a, b) => a.modelId.localeCompare(b.modelId))
@@ -112,16 +105,15 @@ export async function evaluateDiscovery(
 export async function finalizeDiscovery(
   evaluation: DiscoveryEvaluation,
   env: Env,
-  confirmer: Confirmer,
-  notifier: Notifier,
-  refresher: Refresher,
+  ui: DiscoveryUi,
+  refresh?: RefreshModelsRegistry,
 ): Promise<void> {
   const level = notificationLevel(evaluation)
   const summary = buildDiscoverySummary(evaluation)
 
   // Always surface the discovery result first (toast styling), then decide.
   if (evaluation.dryRun) {
-    notifier.notify(
+    ui.notify(
       `${summary}
 Dry run: left models.json unchanged.`,
       level,
@@ -130,7 +122,7 @@ Dry run: left models.json unchanged.`,
   }
 
   if (evaluation.passing.length === 0) {
-    notifier.notify(
+    ui.notify(
       `${summary}
 Left models.json unchanged.`,
       level,
@@ -138,16 +130,20 @@ Left models.json unchanged.`,
     return
   }
 
-  notifier.notify(summary, level)
+  ui.notify(summary, level)
   const { title, message } = buildConfirmPrompt(evaluation)
-  const shouldUpdate = await confirmer.confirm(title, message)
+  const shouldUpdate = await ui.confirm(title, message)
   if (shouldUpdate) {
     updateModelsJson(evaluation.data, evaluation.passing, env)
-    const refreshResult = await runCatchingAsync(() => refresher.refresh())
+    if (!refresh) {
+      ui.notify('Updated models.json.', 'info')
+      return
+    }
+    const refreshResult = await runCatchingAsync(() => refresh())
     if (refreshResult.ok) {
-      notifier.notify('Updated models.json. New models are available in /model.', 'info')
+      ui.notify('Updated models.json. New models are available in /model.', 'info')
     } else {
-      notifier.notify(
+      ui.notify(
         `Updated models.json, but the model registry could not be refreshed: ${formatError(refreshResult.error)}. Run /reload or restart Pi to use the changes.`,
         'warning',
       )
@@ -155,7 +151,7 @@ Left models.json unchanged.`,
     return
   }
 
-  notifier.notify('Left models.json unchanged.', 'info')
+  ui.notify('Left models.json unchanged.', 'info')
 }
 
 function buildDiscoverySummary(evaluation: DiscoveryEvaluation): string {
@@ -221,8 +217,8 @@ export async function runCatchingAsync<T>(fn: () => Promise<T>): Promise<Try<T>>
   }
 }
 
-export function complainOnBrokenEnv(notifier: Notifier, env: Try<Env>) {
+export function complainOnBrokenEnv(ui: DiscoveryUi, env: Try<Env>) {
   if (!env.ok) {
-    notifier.notify(`failed to load env: ${formatError(env.error)}`, 'error')
+    ui.notify(`failed to load env: ${formatError(env.error)}`, 'error')
   }
 }

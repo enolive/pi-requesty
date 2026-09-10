@@ -3,23 +3,20 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HealthCheckResult, Provider } from './health-check'
 import * as HealthCheckModule from './health-check'
 import * as ModelsJsonModule from './models-json'
-import type { ApiKeyProvider, ModelsDiff, ModelsJson } from './models-json'
+import type { GetApiKey, ModelsDiff, ModelsJson } from './models-json'
 import * as RequestyApiModule from './requesty-api'
 import { shuffleCompareFn } from '../test/helpers/shuffle.ts'
 import { type Env, DEFAULT_PROVIDER_ID } from './env'
 import {
   complainOnBrokenEnv,
+  type DiscoveryEvaluation,
+  type DiscoveryUi,
   evaluateDiscovery,
   finalizeDiscovery,
   formatDiscoveryFailure,
   getArgumentCompletions,
   runCatching,
   runCatchingAsync,
-  type Confirmer,
-  type DiscoveryEvaluation,
-  type Notifier,
-  type Refresher,
-  type StatusReporter,
 } from './discovery'
 
 vi.mock('./health-check')
@@ -57,9 +54,7 @@ const modelsJson: ModelsJson = {
   },
 }
 
-const apiKeyProvider: ApiKeyProvider = {
-  getApiKey: () => Promise.resolve('test-api-key'),
-}
+const getApiKey: GetApiKey = () => Promise.resolve('test-api-key')
 
 describe('getArgumentCompletions', () => {
   it('returns dry-run option for empty prefix', () => {
@@ -113,40 +108,38 @@ describe('formatDiscoveryFailure', () => {
 
 describe('complainOnBrokenEnv', () => {
   it('notifies when env failed to load', () => {
-    const notifier = createNotifier()
+    const ui = createUi()
 
-    complainOnBrokenEnv(notifier, { ok: false, error: new Error('env load failed') })
+    complainOnBrokenEnv(ui, { ok: false, error: new Error('env load failed') })
 
-    expect(notifier.notifications).toEqual([{ message: 'failed to load env: env load failed', level: 'error' }])
+    expect(ui.notifications).toEqual([{ message: 'failed to load env: env load failed', level: 'error' }])
   })
 
   it('does nothing when env loaded fine', () => {
-    const notifier = createNotifier()
+    const ui = createUi()
 
-    complainOnBrokenEnv(notifier, { ok: true, value: createEnv() })
+    complainOnBrokenEnv(ui, { ok: true, value: createEnv() })
 
-    expect(notifier.notifications).toEqual([])
+    expect(ui.notifications).toEqual([])
   })
 })
 
 describe('evaluateDiscovery', () => {
-  it('uses the api key from the given provider', async () => {
+  it('uses the api key resolved by the given getApiKey function', async () => {
     const { discoverModels } = configureMockedDependencies()
-    const status = createStatusReporter()
+    const ui = createUi()
 
-    await evaluateDiscovery('', createEnv(), status, apiKeyProvider)
+    await evaluateDiscovery('', createEnv(), ui, getApiKey)
 
     expect(discoverModels).toHaveBeenCalledWith({ ...provider, apiKey: 'test-api-key' })
   })
 
-  it('forwards the api key resolved by the given apiKeyProvider to discoverModels', async () => {
+  it('forwards the api key resolved by the given getApiKey function to discoverModels', async () => {
     const { discoverModels } = configureMockedDependencies()
-    const status = createStatusReporter()
-    const customApiKeyProvider: ApiKeyProvider = {
-      getApiKey: () => Promise.resolve('custom-api-key'),
-    }
+    const ui = createUi()
+    const customGetApiKey: GetApiKey = () => Promise.resolve('custom-api-key')
 
-    await evaluateDiscovery('', createEnv(), status, customApiKeyProvider)
+    await evaluateDiscovery('', createEnv(), ui, customGetApiKey)
 
     expect(discoverModels).toHaveBeenCalledWith({ ...provider, apiKey: 'custom-api-key' })
   })
@@ -154,11 +147,11 @@ describe('evaluateDiscovery', () => {
   it('reports progress while checking models', async () => {
     const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
     configureMockedDependencies({ models })
-    const status = createStatusReporter()
+    const ui = createUi()
 
-    await evaluateDiscovery('', createEnv(), status, apiKeyProvider)
+    await evaluateDiscovery('', createEnv(), ui, getApiKey)
 
-    expect(status.messages).toEqual([
+    expect(ui.statuses).toEqual([
       'Discovering Requesty models...',
       'Checking models 0/2...',
       'Checking models 1/2...',
@@ -173,9 +166,9 @@ describe('evaluateDiscovery', () => {
       createHealthCheckResult({ modelId: 'requesty/model-b', ok: true }),
     ]
     configureMockedDependencies({ models, healthResults })
-    const status = createStatusReporter()
+    const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv(), status, apiKeyProvider)
+    const evaluation = await evaluateDiscovery('', createEnv(), ui, getApiKey)
 
     expect(evaluation.passing).toEqual(models)
     expect(evaluation.failedCount).toBe(0)
@@ -190,9 +183,9 @@ describe('evaluateDiscovery', () => {
       createHealthCheckResult({ modelId: 'requesty/failing-model', ok: false }),
     ]
     configureMockedDependencies({ models: [passingModel, failingModel], healthResults })
-    const status = createStatusReporter()
+    const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv(), status, apiKeyProvider)
+    const evaluation = await evaluateDiscovery('', createEnv(), ui, getApiKey)
 
     expect(evaluation.passing).toEqual([passingModel])
     expect(evaluation.failedCount).toBe(1)
@@ -211,9 +204,9 @@ describe('evaluateDiscovery', () => {
       models: [failingModel1, failingModel2, failingModel3],
       healthResults: shuffledHealthResults,
     })
-    const status = createStatusReporter()
+    const ui = createUi()
 
-    await evaluateDiscovery('', createEnv(), status, apiKeyProvider)
+    await evaluateDiscovery('', createEnv(), ui, getApiKey)
 
     const modelId = (healthCheck: HealthCheckResult) => healthCheck.modelId
     const [summaryHealthChecks] = formatHealthSummary.mock.calls[0]
@@ -240,9 +233,9 @@ describe('evaluateDiscovery', () => {
       models: [passingModel1, passingModel2, passingModel3],
       healthResults: shuffledHealthResults,
     })
-    const status = createStatusReporter()
+    const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv(), status, apiKeyProvider)
+    const evaluation = await evaluateDiscovery('', createEnv(), ui, getApiKey)
 
     expect(evaluation.passing.map(m => m.id)).toEqual([
       'requesty/passing-model-1',
@@ -254,9 +247,9 @@ describe('evaluateDiscovery', () => {
   it('includes the model diff even when health checks are off', async () => {
     const diff = { added: ['requesty/model-new'], removed: [] }
     const { diffModels } = configureMockedDependencies({ healthCheckMode: 'off', diff })
-    const status = createStatusReporter()
+    const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv({ health_check_mode: 'off' }), status, apiKeyProvider)
+    const evaluation = await evaluateDiscovery('', createEnv({ health_check_mode: 'off' }), ui, getApiKey)
 
     expect(diffModels).toHaveBeenCalled()
     expect(evaluation.diff).toEqual(diff)
@@ -264,28 +257,23 @@ describe('evaluateDiscovery', () => {
 
   it('propagates getRequestyConfig errors', async () => {
     configureMockedDependencies({ getRequestyConfigError: new Error('models.json exploded') })
-    const status = createStatusReporter()
+    const ui = createUi()
 
-    await expect(evaluateDiscovery('', createEnv(), status, apiKeyProvider)).rejects.toThrow('models.json exploded')
+    await expect(evaluateDiscovery('', createEnv(), ui, getApiKey)).rejects.toThrow('models.json exploded')
   })
 
   it('propagates discoverModels errors', async () => {
     configureMockedDependencies({ discoverModelsError: new Error('bad day') })
-    const status = createStatusReporter()
+    const ui = createUi()
 
-    await expect(evaluateDiscovery('', createEnv(), status, apiKeyProvider)).rejects.toThrow('bad day')
+    await expect(evaluateDiscovery('', createEnv(), ui, getApiKey)).rejects.toThrow('bad day')
   })
 
   it('detects dry-run from args', async () => {
     configureMockedDependencies()
-    const status = createStatusReporter()
+    const ui = createUi()
 
-    const evaluation = await evaluateDiscovery(
-      '--dry-run',
-      createEnv({ health_check_mode: 'off' }),
-      status,
-      apiKeyProvider,
-    )
+    const evaluation = await evaluateDiscovery('--dry-run', createEnv({ health_check_mode: 'off' }), ui, getApiKey)
 
     expect(evaluation.dryRun).toBe(true)
   })
@@ -294,58 +282,63 @@ describe('evaluateDiscovery', () => {
 describe('finalizeDiscovery', () => {
   it('does not update models.json and only notifies on dry-run', async () => {
     const { updateModelsJson } = configureMockedDependencies()
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher()
+    const ui = createUi()
 
-    await finalizeDiscovery(createEvaluation({ dryRun: true }), createEnv(), confirmer, notifier, refresher)
+    await finalizeDiscovery(createEvaluation({ dryRun: true }), createEnv(), ui)
 
     expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(confirmer.confirmations).toEqual([])
-    expect(notifier.notifications[0]?.message).toContain('Dry run: left models.json unchanged.')
+    expect(ui.confirmations).toEqual([])
+    expect(ui.notifications[0]?.message).toContain('Dry run: left models.json unchanged.')
   })
 
   it('does not confirm or update when there are no passing models', async () => {
     const { updateModelsJson } = configureMockedDependencies()
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher()
+    const ui = createUi()
+    const refresh = createRefresh()
 
-    await finalizeDiscovery(createEvaluation({ passing: [] }), createEnv(), confirmer, notifier, refresher)
+    await finalizeDiscovery(createEvaluation({ passing: [] }), createEnv(), ui, refresh)
 
-    expect(confirmer.confirmations).toEqual([])
+    expect(ui.confirmations).toEqual([])
     expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(notifier.notifications.at(-1)?.message).toContain('Left models.json unchanged.')
+    expect(ui.notifications.at(-1)?.message).toContain('Left models.json unchanged.')
   })
 
   it('confirms then writes when confirmed', async () => {
     const { updateModelsJson } = configureMockedDependencies()
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher()
+    const ui = createUi()
+    const refresh = createRefresh()
     const evaluation = createEvaluation()
 
-    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier, refresher)
+    await finalizeDiscovery(evaluation, createEnv(), ui, refresh)
 
-    expect(confirmer.confirmations).toHaveLength(1)
+    expect(ui.confirmations).toHaveLength(1)
     expect(updateModelsJson).toHaveBeenCalledWith(evaluation.data, evaluation.passing, expect.any(Object))
-    expect(refresher.refreshes).toBe(1)
-    expect(notifier.notifications.at(-1)).toEqual({
+    expect(refresh.calls).toBe(1)
+    expect(ui.notifications.at(-1)).toEqual({
       message: 'Updated models.json. New models are available in /model.',
       level: 'info',
     })
   })
 
-  it('notifies a warning when refreshing the registry fails after a successful write', async () => {
+  it('notifies a plain success when no refresh is given (print mode has no live registry)', async () => {
     const { updateModelsJson } = configureMockedDependencies()
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher(new Error('registry exploded'))
+    const ui = createUi()
 
-    await finalizeDiscovery(createEvaluation(), createEnv(), confirmer, notifier, refresher)
+    await finalizeDiscovery(createEvaluation(), createEnv(), ui)
 
     expect(updateModelsJson).toHaveBeenCalled()
-    expect(notifier.notifications.at(-1)).toEqual({
+    expect(ui.notifications.at(-1)).toEqual({ message: 'Updated models.json.', level: 'info' })
+  })
+
+  it('notifies a warning when refreshing the registry fails after a successful write', async () => {
+    const { updateModelsJson } = configureMockedDependencies()
+    const ui = createUi()
+    const refresh = createRefresh(new Error('registry exploded'))
+
+    await finalizeDiscovery(createEvaluation(), createEnv(), ui, refresh)
+
+    expect(updateModelsJson).toHaveBeenCalled()
+    expect(ui.notifications.at(-1)).toEqual({
       message:
         'Updated models.json, but the model registry could not be refreshed: registry exploded. Run /reload or restart Pi to use the changes.',
       level: 'warning',
@@ -354,15 +347,14 @@ describe('finalizeDiscovery', () => {
 
   it('does not write when confirmation is declined', async () => {
     const { updateModelsJson } = configureMockedDependencies()
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(false)
-    const refresher = createRefresher()
+    const ui = createUi(false)
+    const refresh = createRefresh()
 
-    await finalizeDiscovery(createEvaluation(), createEnv(), confirmer, notifier, refresher)
+    await finalizeDiscovery(createEvaluation(), createEnv(), ui, refresh)
 
     expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(refresher.refreshes).toBe(0)
-    expect(notifier.notifications.at(-1)).toEqual({
+    expect(refresh.calls).toBe(0)
+    expect(ui.notifications.at(-1)).toEqual({
       message: 'Left models.json unchanged.',
       level: 'info',
     })
@@ -370,31 +362,22 @@ describe('finalizeDiscovery', () => {
 
   it('does not refresh the registry on dry-run or no-passing-models exits', async () => {
     const { updateModelsJson } = configureMockedDependencies()
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher()
+    const ui = createUi()
+    const refresh = createRefresh()
 
-    await finalizeDiscovery(createEvaluation({ dryRun: true }), createEnv(), confirmer, notifier, refresher)
-    await finalizeDiscovery(createEvaluation({ passing: [] }), createEnv(), confirmer, notifier, refresher)
+    await finalizeDiscovery(createEvaluation({ dryRun: true }), createEnv(), ui, refresh)
+    await finalizeDiscovery(createEvaluation({ passing: [] }), createEnv(), ui, refresh)
 
     expect(updateModelsJson).not.toHaveBeenCalled()
-    expect(refresher.refreshes).toBe(0)
+    expect(refresh.calls).toBe(0)
   })
 
   it('still confirms when the model id diff is empty, asking to refresh', async () => {
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher()
+    const ui = createUi()
 
-    await finalizeDiscovery(
-      createEvaluation({ diff: { added: [], removed: [] } }),
-      createEnv(),
-      confirmer,
-      notifier,
-      refresher,
-    )
+    await finalizeDiscovery(createEvaluation({ diff: { added: [], removed: [] } }), createEnv(), ui)
 
-    expect(confirmer.confirmations).toEqual([
+    expect(ui.confirmations).toEqual([
       {
         title: 'Refresh models.json?',
         message: 'No model ID changes. Rewrite the file to refresh metadata anyway?',
@@ -403,14 +386,12 @@ describe('finalizeDiscovery', () => {
   })
 
   it('asks to write when the model id diff has changes', async () => {
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher()
+    const ui = createUi()
     const evaluation = createEvaluation({ diff: { added: ['requesty/model-new'], removed: [] } })
 
-    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier, refresher)
+    await finalizeDiscovery(evaluation, createEnv(), ui)
 
-    expect(confirmer.confirmations).toEqual([
+    expect(ui.confirmations).toEqual([
       {
         title: `Write ${evaluation.passing.length} model(s)?`,
         message: 'Update models.json with the discovery result above.',
@@ -419,66 +400,40 @@ describe('finalizeDiscovery', () => {
   })
 
   it('notifies info when no models failed', async () => {
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher()
+    const ui = createUi()
 
-    await finalizeDiscovery(
-      createEvaluation({ failedCount: 0, modelCount: 2 }),
-      createEnv(),
-      confirmer,
-      notifier,
-      refresher,
-    )
+    await finalizeDiscovery(createEvaluation({ failedCount: 0, modelCount: 2 }), createEnv(), ui)
 
-    expect(notifier.notifications[0]?.level).toBe('info')
+    expect(ui.notifications[0]?.level).toBe('info')
   })
 
   it('notifies warning on partial failures', async () => {
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher()
+    const ui = createUi()
 
-    await finalizeDiscovery(
-      createEvaluation({ failedCount: 1, modelCount: 2 }),
-      createEnv(),
-      confirmer,
-      notifier,
-      refresher,
-    )
+    await finalizeDiscovery(createEvaluation({ failedCount: 1, modelCount: 2 }), createEnv(), ui)
 
-    expect(notifier.notifications[0]?.level).toBe('warning')
+    expect(ui.notifications[0]?.level).toBe('warning')
   })
 
   it('notifies error when all models failed', async () => {
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher()
+    const ui = createUi()
 
-    await finalizeDiscovery(
-      createEvaluation({ failedCount: 2, modelCount: 2, passing: [] }),
-      createEnv(),
-      confirmer,
-      notifier,
-      refresher,
-    )
+    await finalizeDiscovery(createEvaluation({ failedCount: 2, modelCount: 2, passing: [] }), createEnv(), ui)
 
-    expect(notifier.notifications[0]?.level).toBe('error')
+    expect(ui.notifications[0]?.level).toBe('error')
   })
 
   it('includes health check summary and log note in the summary', async () => {
-    const notifier = createNotifier()
-    const confirmer = createConfirmer(true)
-    const refresher = createRefresher()
+    const ui = createUi()
     const evaluation = createEvaluation({
       healthCheckSummary: 'Health check summary.\n',
       logNote: `Full health check log: ${HEALTH_CHECK_LOG_PATH}\n`,
       diff: { added: ['requesty/model-a'], removed: [] },
     })
 
-    await finalizeDiscovery(evaluation, createEnv(), confirmer, notifier, refresher)
+    await finalizeDiscovery(evaluation, createEnv(), ui)
 
-    expect(notifier.notifications[0]?.message).toEqual(
+    expect(ui.notifications[0]?.message).toEqual(
       [
         'Discovered 1 Requesty model(s).',
         'Health check summary.',
@@ -526,46 +481,40 @@ function createHealthCheckResult(overrides: Partial<HealthCheckResult> = {}): He
   }
 }
 
-function createStatusReporter(): StatusReporter & { messages: string[] } {
-  const messages: string[] = []
-  return {
-    messages,
-    set(message: string) {
-      messages.push(message)
-    },
-  }
-}
-
-function createNotifier(): Notifier & { notifications: Array<{ message: string; level: string }> } {
+/** Fake DiscoveryUi that records notifications, confirmations, and status messages. */
+function createUi(confirmResult = true): DiscoveryUi & {
+  notifications: Array<{ message: string; level: string }>
+  confirmations: Array<{ title: string; message: string }>
+  statuses: string[]
+} {
   const notifications: Array<{ message: string; level: string }> = []
+  const confirmations: Array<{ title: string; message: string }> = []
+  const statuses: string[] = []
   return {
     notifications,
+    confirmations,
+    statuses,
     notify(message, level) {
       notifications.push({ message, level })
     },
-  }
-}
-
-function createConfirmer(result: boolean): Confirmer & { confirmations: Array<{ title: string; message: string }> } {
-  const confirmations: Array<{ title: string; message: string }> = []
-  return {
-    confirmations,
     confirm(title, message) {
       confirmations.push({ title, message })
-      return Promise.resolve(result)
+      return Promise.resolve(confirmResult)
+    },
+    setStatus(message) {
+      statuses.push(message)
     },
   }
 }
 
-function createRefresher(error?: Error): Refresher & { refreshes: number } {
-  const refresher = {
-    refreshes: 0,
-    refresh: () => {
-      refresher.refreshes++
-      return error ? Promise.reject(error) : Promise.resolve()
-    },
-  }
-  return refresher
+/** Fake refresh callback that counts invocations and optionally rejects. */
+function createRefresh(error?: Error): (() => Promise<void>) & { calls: number } {
+  const refresh = (() => {
+    refresh.calls++
+    return error ? Promise.reject(error) : Promise.resolve()
+  }) as (() => Promise<void>) & { calls: number }
+  refresh.calls = 0
+  return refresh
 }
 
 /** Configure mocked domain deps for evaluateDiscovery/finalizeDiscovery. */
@@ -577,8 +526,8 @@ function configureMockedDependencies(scenario: MockScenario = {}) {
   if (scenario.getRequestyConfigError) {
     getRequestyConfig.mockThrow(scenario.getRequestyConfigError)
   } else {
-    getRequestyConfig.mockImplementation(async (givenApiKeyProvider, env = createEnv()) => {
-      const apiKey = await givenApiKeyProvider.getApiKey(env.provider_id)
+    getRequestyConfig.mockImplementation(async (getApiKey, env = createEnv()) => {
+      const apiKey = await getApiKey(env.provider_id)
       return {
         data: modelsJson,
         provider: { ...provider, apiKey: apiKey ?? 'not-found' },

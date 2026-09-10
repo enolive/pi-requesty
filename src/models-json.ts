@@ -7,9 +7,8 @@ import { type Env, getEnv } from './env'
 const DEFAULT_BASE_URL = 'https://router.requesty.ai/v1'
 const DEFAULT_NAME = 'Requesty'
 
-export type ApiKeyProvider = {
-  getApiKey(providerId: string): Promise<string | undefined>
-}
+/** Resolves the API key for a provider through Pi's model registry. */
+export type GetApiKey = (providerId: string) => Promise<string | undefined>
 
 const ProviderSchema = z
   .object({
@@ -47,10 +46,7 @@ export type ModelsDiff = {
   removed: string[]
 }
 
-export async function getRequestyConfig(
-  apiKeyProvider: ApiKeyProvider,
-  envConfig: Env = getEnv(),
-): Promise<RequestyConfig> {
+export async function getRequestyConfig(getApiKey: GetApiKey, envConfig: Env = getEnv()): Promise<RequestyConfig> {
   const data = readModelsJson(envConfig)
   const provider = data.providers[envConfig.provider_id]
 
@@ -58,7 +54,7 @@ export async function getRequestyConfig(
     throw new Error(`${envConfig.models_json_path} does not define providers.${envConfig.provider_id}`)
   }
 
-  const apiKey = await apiKeyProvider.getApiKey(envConfig.provider_id)
+  const apiKey = await getApiKey(envConfig.provider_id)
   if (!apiKey) {
     throw new Error(`No API key found for provider ${envConfig.provider_id}`)
   }

@@ -1,13 +1,13 @@
 import type { RegisteredCommand } from '@earendil-works/pi-coding-agent'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApiKeyInfo } from './requesty-api'
-import type { RequestyStatusLoader } from './ui/requesty-status-loader.ts'
 import * as RequestyApiModule from './requesty-api'
+import type { RequestyStatusLoader } from './ui/requesty-status-loader.ts'
 import * as ModelsJsonModule from './models-json'
 import * as EnvModule from './env'
 import { Env } from './env'
-import * as DiscoveryModule from './discovery'
 import type { DiscoveryEvaluation, Try } from './discovery'
+import * as DiscoveryModule from './discovery'
 import { createFakeCommandContext, createFakePi, fireEvent } from '../test/helpers/fake-pi'
 import { resetUsageStatusCache } from './index.ts'
 
@@ -77,14 +77,13 @@ describe('extension registration', () => {
       '--dry-run',
       mockedEnv.value,
       expect.any(Object),
-      expect.any(Object),
+      expect.any(Function),
     )
     expect(DiscoveryModule.finalizeDiscovery).toHaveBeenCalledWith(
       evaluation,
       mockedEnv.value,
       expect.any(Object),
-      expect.any(Object),
-      expect.any(Object),
+      expect.any(Function),
     )
   })
 })
@@ -101,50 +100,68 @@ describe('argument completions wiring', () => {
 })
 
 describe('runDiscoveryWorkflow mode dispatch', () => {
-  it('runs interactively (ctx.ui) in tui mode: notify, evaluate, finalize', async () => {
+  it('wires ctx.ui (notify, confirm, status) and registry refresh into discovery in tui mode', async () => {
     const mockedEnv = mockOkEnv()
     const evaluation = createEvaluation()
     vi.mocked(DiscoveryModule.evaluateDiscovery).mockResolvedValue(evaluation)
     vi.mocked(DiscoveryModule.finalizeDiscovery).mockResolvedValue(undefined)
     const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx } = createFakeCommandContext({
-      confirmResult: true,
-      knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' },
-    })
+    const { ctx, capturedNotifications, capturedConfirmations, capturedStatuses, capturedModelRefreshes } =
+      createFakeCommandContext({
+        confirmResult: true,
+        knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' },
+      })
 
     await runDiscoveryWorkflow(ctx, mockedEnv, '')
 
     expect(DiscoveryModule.evaluateDiscovery).toHaveBeenCalled()
     expect(DiscoveryModule.finalizeDiscovery).toHaveBeenCalled()
-    const [args, envArg, , apiKeyProvider] = vi.mocked(DiscoveryModule.evaluateDiscovery).mock.calls[0]
+    const [args, env, ui, getApiKey] = vi.mocked(DiscoveryModule.evaluateDiscovery).mock.calls[0]
     expect(args).toBe('')
-    expect(envArg).toBe(mockedEnv.value)
-    await expect(apiKeyProvider.getApiKey(REQUESTY_PROVIDER_ID)).resolves.toBe('my-api-key')
-    const [evaluationArg, finalizeEnvArg] = vi.mocked(DiscoveryModule.finalizeDiscovery).mock.calls[0]
-    expect(evaluationArg).toBe(evaluation)
-    expect(finalizeEnvArg).toBe(mockedEnv.value)
+    expect(env).toBe(mockedEnv.value)
+    ui.notify('hello', 'warning')
+    ui.setStatus('checking...')
+    await expect(ui.confirm('title', 'message')).resolves.toBe(true)
+    await expect(getApiKey(REQUESTY_PROVIDER_ID)).resolves.toBe('my-api-key')
+    expect(capturedNotifications).toEqual([{ message: `${COMMAND_NAME}: hello`, type: 'warning' }])
+    expect(capturedStatuses).toEqual(['checking...'])
+    expect(capturedConfirmations).toEqual([{ title: 'title', message: 'message' }])
+    const [, , , refresh] = vi.mocked(DiscoveryModule.finalizeDiscovery).mock.calls[0]
+    await refresh!()
+    expect(capturedModelRefreshes).toEqual([{ allowNetwork: false }])
   })
 
-  it('runs silently (console) outside tui mode: no ctx.ui interaction', async () => {
+  it('wires console ui and auto-confirm into discovery outside tui mode: no ctx.ui interaction, no registry refresh', async () => {
     const mockedEnv = mockOkEnv()
     const evaluation = createEvaluation()
     vi.mocked(DiscoveryModule.evaluateDiscovery).mockResolvedValue(evaluation)
     vi.mocked(DiscoveryModule.finalizeDiscovery).mockResolvedValue(undefined)
     const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedConfirmations, capturedNotifications, capturedStatuses } = createFakeCommandContext({
-      mode: 'print',
-      knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' },
-    })
+    const { ctx, capturedConfirmations, capturedNotifications, capturedStatuses, capturedModelRefreshes } =
+      createFakeCommandContext({
+        mode: 'print',
+        knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' },
+      })
 
     await runDiscoveryWorkflow(ctx, mockedEnv, '')
 
+    expect(DiscoveryModule.evaluateDiscovery).toHaveBeenCalled()
+    expect(DiscoveryModule.finalizeDiscovery).toHaveBeenCalled()
+    const [, , ui, getApiKey] = vi.mocked(DiscoveryModule.evaluateDiscovery).mock.calls[0]
+    const consoleSpy = vi.spyOn(console, 'log')
+    ui.notify('hello', 'warning')
+    ui.setStatus('checking...')
+    // this will not result in any console output
+    await expect(ui.confirm('title', 'message')).resolves.toBe(true)
+    await expect(getApiKey(REQUESTY_PROVIDER_ID)).resolves.toBe('my-api-key')
+    const [, , , refresh] = vi.mocked(DiscoveryModule.finalizeDiscovery).mock.calls[0]
+    expect(refresh).toBeUndefined()
+    expect(consoleSpy).toHaveBeenNthCalledWith(1, '[warning] hello')
+    expect(consoleSpy).toHaveBeenNthCalledWith(2, 'checking...')
     expect(capturedConfirmations).toEqual([])
     expect(capturedNotifications).toEqual([])
     expect(capturedStatuses).toEqual([])
-    expect(DiscoveryModule.evaluateDiscovery).toHaveBeenCalled()
-    expect(DiscoveryModule.finalizeDiscovery).toHaveBeenCalled()
-    const [, , , apiKeyProvider] = vi.mocked(DiscoveryModule.evaluateDiscovery).mock.calls[0]
-    await expect(apiKeyProvider.getApiKey(REQUESTY_PROVIDER_ID)).resolves.toBe('my-api-key')
+    expect(capturedModelRefreshes).toEqual([])
   })
 
   it('does not evaluate or finalize when env failed to load (interactive)', async () => {
@@ -202,123 +219,113 @@ describe('runDiscoveryWorkflow mode dispatch', () => {
   })
 })
 
-describe('ui adapter factories', () => {
-  it('createUiNotifier prefixes messages and delegates to ctx.ui.notify', async () => {
+describe('tui ui adapter', () => {
+  it('createTuiUi routes notify to a prefixed ctx.ui.notify', async () => {
     mockEnv()
-    const { createUiNotifier } = await loadExtension()
+    const { createTuiUi } = await loadExtension()
     const { ctx, capturedNotifications } = createFakeCommandContext()
 
-    createUiNotifier(ctx).notify('hello', 'info')
+    createTuiUi(ctx).notify('hello', 'info')
 
     expect(capturedNotifications).toEqual([{ message: `${COMMAND_NAME}: hello`, type: 'info' }])
   })
 
-  it('createUiConfirmer delegates to ctx.ui.confirm', async () => {
+  it('createTuiUi routes confirm to ctx.ui.confirm', async () => {
     mockEnv()
-    const { createUiConfirmer } = await loadExtension()
+    const { createTuiUi } = await loadExtension()
     const { ctx, capturedConfirmations } = createFakeCommandContext({ confirmResult: true })
 
-    await expect(createUiConfirmer(ctx).confirm('title', 'message')).resolves.toBe(true)
+    await expect(createTuiUi(ctx).confirm('title', 'message')).resolves.toBe(true)
 
     expect(capturedConfirmations).toEqual([{ title: 'title', message: 'message' }])
   })
 
-  it('createLoaderStatusReporter delegates to loader.setMessage', async () => {
+  it('createTuiUi routes setStatus to the status loader', async () => {
     mockEnv()
-    const { createLoaderStatusReporter } = await loadExtension()
+    const { createTuiUi } = await loadExtension()
     const setMessage = vi.fn()
     const fakeLoader = { setMessage } as unknown as RequestyStatusLoader
 
-    createLoaderStatusReporter(fakeLoader).set('Discovering Requesty models...')
+    createTuiUi(ctxlessLoaderScope(), fakeLoader).setStatus('Discovering Requesty models...')
 
     expect(setMessage).toHaveBeenCalledWith('Discovering Requesty models...')
   })
 
-  it('createConsoleNotifier logs level-prefixed messages', async () => {
+  it('createTuiUi ignores setStatus when no loader is given (env-complain path has none)', async () => {
     mockEnv()
-    const { createConsoleNotifier } = await loadExtension()
-    const consoleSpy = vi.spyOn(console, 'log')
+    const { createTuiUi } = await loadExtension()
+    const { ctx } = createFakeCommandContext()
 
-    createConsoleNotifier().notify('hello', 'warning')
-
-    expect(consoleSpy).toHaveBeenCalledWith('[warning] hello')
+    expect(() => createTuiUi(ctx).setStatus('checking...')).not.toThrow()
   })
 
-  it('createConsoleStatusReporter logs the message as-is', async () => {
+  it('refreshRegistry calls ctx.modelRegistry.refresh and resolves on success', async () => {
     mockEnv()
-    const { createConsoleStatusReporter } = await loadExtension()
-    const consoleSpy = vi.spyOn(console, 'log')
-
-    createConsoleStatusReporter().set('Discovering Requesty models...')
-
-    expect(consoleSpy).toHaveBeenCalledWith('Discovering Requesty models...')
-  })
-
-  it('createUiRefresher delegates to ctx.modelRegistry.refresh and resolves on success', async () => {
-    mockEnv()
-    const { createUiRefresher } = await loadExtension()
+    const { createRefreshRegistry } = await loadExtension()
     const { ctx, capturedModelRefreshes } = createFakeCommandContext()
+    const refresh = createRefreshRegistry(ctx)
 
-    await expect(createUiRefresher(ctx).refresh()).resolves.toBeUndefined()
-
+    await expect(refresh()).resolves.toBeUndefined()
     expect(capturedModelRefreshes).toEqual([{ allowNetwork: false }])
   })
 
-  it('createUiRefresher rejects on provider errors inside the refresh result', async () => {
+  it('refreshRegistry rejects on provider errors inside the refresh result', async () => {
     mockEnv()
-    const { createUiRefresher } = await loadExtension()
+    const { createRefreshRegistry } = await loadExtension()
     const refreshResult = {
       aborted: false,
       errors: new Map([['requesty-export', new Error('no key')]]),
     }
     const { ctx } = createFakeCommandContext({ refreshResult })
+    const refresh = createRefreshRegistry(ctx)
 
-    await expect(createUiRefresher(ctx).refresh()).rejects.toThrow('requesty-export: no key')
+    await expect(refresh()).rejects.toThrow('requesty-export: no key')
   })
 
-  it('createUiRefresher rejects on an aborted refresh even without provider errors', async () => {
+  it('refreshRegistry rejects on an aborted refresh even without provider errors', async () => {
     mockEnv()
-    const { createUiRefresher } = await loadExtension()
+    const { createRefreshRegistry } = await loadExtension()
     const refreshResult = { aborted: true, errors: new Map() }
     const { ctx } = createFakeCommandContext({ refreshResult })
+    const refresh = createRefreshRegistry(ctx)
 
-    await expect(createUiRefresher(ctx).refresh()).rejects.toThrow('refresh aborted')
-  })
-
-  it('createNoopRefresher resolves without touching anything', async () => {
-    mockEnv()
-    const { createNoopRefresher } = await loadExtension()
-
-    await expect(createNoopRefresher().refresh()).resolves.toBeUndefined()
-  })
-
-  it('createNoopConfirmer always confirms', async () => {
-    mockEnv()
-    const { createNoopConfirmer } = await loadExtension()
-
-    await expect(createNoopConfirmer().confirm('title', 'message')).resolves.toBe(true)
-  })
-
-  it('createApiKeyProvider delegates to ctx.modelRegistry.getApiKeyForProvider', async () => {
-    mockEnv()
-    const { createApiKeyProvider } = await loadExtension()
-    const { ctx } = createFakeCommandContext({ knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' } })
-
-    await expect(createApiKeyProvider(ctx).getApiKey(REQUESTY_PROVIDER_ID)).resolves.toBe('my-api-key')
+    await expect(refresh()).rejects.toThrow('refresh aborted')
   })
 })
 
-describe('ui adapters passed to discovery (silent mode)', () => {
+describe('console ui adapter', () => {
+  it('logs level-prefixed notifications and statuses', async () => {
+    mockEnv()
+    const { createConsoleUi } = await loadExtension()
+    const consoleSpy = vi.spyOn(console, 'log')
+    const ui = createConsoleUi()
+
+    ui.notify('hello', 'warning')
+    ui.setStatus('Discovering Requesty models...')
+
+    expect(consoleSpy).toHaveBeenCalledWith('[warning] hello')
+    expect(consoleSpy).toHaveBeenCalledWith('Discovering Requesty models...')
+  })
+
+  it('always confirms: print mode is non-interactive, so writes proceed unprompted', async () => {
+    mockEnv()
+    const { createConsoleUi } = await loadExtension()
+
+    await expect(createConsoleUi().confirm('title', 'message')).resolves.toBe(true)
+  })
+})
+
+describe('console ui used by the workflow (silent mode)', () => {
   it('console notifier and status reporter are used outside tui mode', async () => {
     const mockedEnv = mockEnv()
-    vi.mocked(DiscoveryModule.evaluateDiscovery).mockImplementation(async (_args, _env, status) => {
-      status.set('Discovering Requesty models...')
+    vi.mocked(DiscoveryModule.evaluateDiscovery).mockImplementation(async (_args, _env, ui) => {
+      ui.setStatus('Discovering Requesty models...')
       await Promise.resolve()
       return createEvaluation()
     })
-    vi.mocked(DiscoveryModule.finalizeDiscovery).mockImplementation(async (_evaluation, _env, confirmer, notifier) => {
-      const confirmed = await confirmer.confirm('title', 'message')
-      notifier.notify(`confirmed: ${confirmed}`, 'info')
+    vi.mocked(DiscoveryModule.finalizeDiscovery).mockImplementation(async (_evaluation, _env, ui) => {
+      const confirmed = await ui.confirm('title', 'message')
+      ui.notify(`confirmed: ${confirmed}`, 'info')
     })
     const { runDiscoveryWorkflow } = await loadExtension()
     const { ctx } = createFakeCommandContext({ mode: 'print' })
@@ -550,6 +557,11 @@ async function flushMicrotasks(rounds = 100): Promise<void> {
   }
 }
 
+/** The loader test needs no real ctx; notify/confirm on it would fail the capture assertions. */
+function ctxlessLoaderScope(): Parameters<typeof import('./index').createTuiUi>[0] {
+  return {} as Parameters<typeof import('./index').createTuiUi>[0]
+}
+
 /** Mini Pi glue: import extension, register command + event handlers, return entrypoints. */
 async function loadExtension() {
   const extension = await import('./index')
@@ -566,15 +578,9 @@ async function loadExtension() {
     runDiscoveryWorkflow: extension.runDiscoveryWorkflow,
     formatUsageStatus: extension.formatUsageStatus,
     USAGE_STATUS_KEY: extension.USAGE_STATUS_KEY,
-    createUiNotifier: extension.createUiNotifier,
-    createUiConfirmer: extension.createUiConfirmer,
-    createUiRefresher: extension.createUiRefresher,
-    createLoaderStatusReporter: extension.createLoaderStatusReporter,
-    createConsoleNotifier: extension.createConsoleNotifier,
-    createConsoleStatusReporter: extension.createConsoleStatusReporter,
-    createNoopConfirmer: extension.createNoopConfirmer,
-    createNoopRefresher: extension.createNoopRefresher,
-    createApiKeyProvider: extension.createApiKeyProvider,
+    createTuiUi: extension.createTuiUi,
+    createConsoleUi: extension.createConsoleUi,
+    createRefreshRegistry: extension.createRefreshRegistry,
     eventHandlers,
   }
 }

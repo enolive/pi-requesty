@@ -1,22 +1,19 @@
 import { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { type Env, getEnv } from './env'
-import { ApiKeyProvider, getRequestyConfig } from './models-json'
+import { GetApiKey, getRequestyConfig } from './models-json'
 import { type ApiKeyInfo, fetchApiUsage } from './requesty-api'
 import { RequestyStatusLoader } from './ui/requesty-status-loader.ts'
 import {
   complainOnBrokenEnv,
-  type Confirmer,
-  DiscoveryEvaluation,
+  type DiscoveryEvaluation,
+  type DiscoveryUi,
   evaluateDiscovery,
   finalizeDiscovery,
   formatDiscoveryFailure,
   getArgumentCompletions,
-  type Notifier,
-  type NotificationLevel,
-  type Refresher,
+  RefreshModelsRegistry,
   runCatching,
   runCatchingAsync,
-  type StatusReporter,
   type Try,
 } from './discovery'
 
@@ -45,8 +42,8 @@ export default function (pi: ExtensionAPI) {
   })
 
   pi.on('session_start', (_event, ctx) => {
-    const notifier = createUiNotifier(ctx)
-    complainOnBrokenEnv(notifier, env)
+    const ui = createTuiUi(ctx)
+    complainOnBrokenEnv(ui, env)
     void updateUsageStatus(ctx, env)
   })
 
@@ -56,72 +53,58 @@ export default function (pi: ExtensionAPI) {
 }
 
 export async function runDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
-  if (ctx.mode === 'tui') {
-    return runInteractiveDiscoveryWorkflow(ctx, env, args)
-  } else {
-    return runSilentDiscoveryWorkflow(ctx, env, args)
-  }
-}
-
-export async function runInteractiveDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
-  const notifier = createUiNotifier(ctx)
-  complainOnBrokenEnv(notifier, env)
+  const ui = ctx.mode === 'tui' ? createTuiUi(ctx) : createConsoleUi()
+  complainOnBrokenEnv(ui, env)
   if (!env.ok) {
     return
   }
 
-  const confirmer = createUiConfirmer(ctx)
-  const refresher = createUiRefresher(ctx)
-  const apiProvider = createApiKeyProvider(ctx)
+  if (ctx.mode !== 'tui') {
+    return runSilentDiscoveryWorkflow(ctx, env.value, args, ui)
+  } else {
+    return runInteractiveDiscoverWorkflow(ctx, env.value, args, ui)
+  }
+}
 
+async function runSilentDiscoveryWorkflow(
+  ctx: ExtensionCommandContext,
+  env: Env,
+  args: string,
+  ui: DiscoveryUi,
+): Promise<void> {
+  const evaluationResult = await runCatchingAsync(() => evaluateDiscovery(args, env, ui, createGetApiKey(ctx)))
+  if (!evaluationResult.ok) {
+    ui.notify(formatDiscoveryFailure(evaluationResult.error), 'error')
+    return
+  }
+
+  await finalizeDiscovery(evaluationResult.value, env, ui)
+}
+
+async function runInteractiveDiscoverWorkflow(ctx: ExtensionCommandContext, env: Env, args: string, ui: DiscoveryUi) {
   const evaluationResult: Try<DiscoveryEvaluation> = await runWithStatusUi(
     ctx,
     'Discovering models...',
-    async status => await runCatchingAsync(() => evaluateDiscovery(args, env.value, status, apiProvider)),
+    async statusUi => await runCatchingAsync(() => evaluateDiscovery(args, env, statusUi, createGetApiKey(ctx))),
   )
 
   if (!evaluationResult.ok) {
-    notifier.notify(formatDiscoveryFailure(evaluationResult.error), 'error')
+    ui.notify(formatDiscoveryFailure(evaluationResult.error), 'error')
     return
   }
 
-  await finalizeDiscovery(evaluationResult.value, env.value, confirmer, notifier, refresher)
-}
-
-export async function runSilentDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
-  const notifier = createConsoleNotifier()
-  complainOnBrokenEnv(notifier, env)
-  if (!env.ok) {
-    return
-  }
-
-  const apiProvider = createApiKeyProvider(ctx)
-  const status = createConsoleStatusReporter()
-  const confirmer = createNoopConfirmer()
-  const refresher = createNoopRefresher()
-
-  const evaluationResult: Try<DiscoveryEvaluation> = await runCatchingAsync(() =>
-    evaluateDiscovery(args, env.value, status, apiProvider),
-  )
-
-  if (!evaluationResult.ok) {
-    notifier.notify(formatDiscoveryFailure(evaluationResult.error), 'error')
-    return
-  }
-
-  await finalizeDiscovery(evaluationResult.value, env.value, confirmer, notifier, refresher)
+  await finalizeDiscovery(evaluationResult.value, env, ui, createRefreshRegistry(ctx))
 }
 
 async function runWithStatusUi<T>(
   ctx: ExtensionCommandContext,
   initialMessage: string,
-  fn: (status: StatusReporter) => Promise<T>,
+  fn: (statusUi: DiscoveryUi) => Promise<T>,
 ): Promise<T> {
   return ctx.ui.custom<T>((tui, theme, _kb, done) => {
     const loader = new RequestyStatusLoader(tui, theme, initialMessage)
-    const status = createLoaderStatusReporter(loader)
     void Promise.resolve()
-      .then(() => fn(status))
+      .then(() => fn(createTuiUi(ctx, loader)))
       .then(done)
       .catch(done)
     return loader
@@ -139,8 +122,7 @@ async function updateUsageStatus(ctx: ExtensionContext, env: Try<Env>): Promise<
       ctx.ui.setStatus(USAGE_STATUS_KEY, undefined)
       return
     }
-    const apiKeyProvider = createApiKeyProvider(ctx)
-    const info = await fetchUsageStatus(apiKeyProvider, env.value)
+    const info = await fetchUsageStatus(createGetApiKey(ctx), env.value)
     if (latestToken !== token) return
     ctx.ui.setStatus(USAGE_STATUS_KEY, formatUsageStatus(info))
   } catch {
@@ -160,12 +142,12 @@ export function formatUsageStatus(info: ApiKeyInfo): string {
 
 let lastFetched: { value: ApiKeyInfo; time: Date } | undefined
 
-async function fetchUsageStatus(apiKeyProvider: ApiKeyProvider, env: Env): Promise<ApiKeyInfo> {
+async function fetchUsageStatus(getApiKey: GetApiKey, env: Env): Promise<ApiKeyInfo> {
   const now = new Date()
   if (lastFetched?.time && now.getTime() - lastFetched.time.getTime() < 2000) {
     return lastFetched.value
   }
-  const { provider } = await getRequestyConfig(apiKeyProvider, env)
+  const { provider } = await getRequestyConfig(getApiKey, env)
   const value = await fetchApiUsage(provider)
   lastFetched = { value, time: new Date() }
   return value
@@ -178,76 +160,39 @@ export function resetUsageStatusCache(): void {
   lastFetched = undefined
 }
 
+/** TUI adapter: routes the workflow's UI needs to Pi's ctx.ui. */
+export function createTuiUi(ctx: ExtensionContext, loader?: RequestyStatusLoader): DiscoveryUi {
+  return {
+    notify: (message, level) => ctx.ui.notify(`${COMMAND_NAME}: ${message}`, level),
+    confirm: (title, message) => ctx.ui.confirm(title, message),
+    setStatus: message => loader?.setMessage(message),
+  }
+}
+
 /**
- * minimal abstraction for getting an API key to not pollute anything outside index.ts with too many pi internals.
+ * Console adapter for non-interactive modes. Always confirms: print mode is
+ * non-interactive, so the write proceeds without a confirmation dialog.
  */
-export function createApiKeyProvider(ctx: ExtensionContext): ApiKeyProvider {
+export function createConsoleUi(): DiscoveryUi {
   return {
-    async getApiKey(providerId: string) {
-      return ctx.modelRegistry.getApiKeyForProvider(providerId)
-    },
-  }
-}
-
-export function createUiNotifier(ctx: ExtensionContext): Notifier {
-  return {
-    notify(message: string, level?: NotificationLevel) {
-      const prefixedMessage = `${COMMAND_NAME}: ${message}`
-      ctx.ui.notify(prefixedMessage, level)
-    },
-  }
-}
-
-export function createUiConfirmer(ctx: ExtensionContext): Confirmer {
-  return {
-    confirm(title, message) {
-      return ctx.ui.confirm(title, message)
-    },
+    notify: (message, level) => console.log(`[${level}] ${message}`),
+    // eslint-disable-next-line @typescript-eslint/require-await -- must match the DiscoveryUi promise signature
+    confirm: async () => true,
+    setStatus: message => console.log(message),
   }
 }
 
 /** Re-reads models.json through Pi's model registry so new models are usable without /reload. */
-export function createUiRefresher(ctx: ExtensionContext): Refresher {
-  return {
-    refresh: () =>
-      ctx.modelRegistry.refresh({ allowNetwork: false }).then(result => {
-        if (result.aborted || result.errors.size > 0) {
-          const detail = [...result.errors.entries()].map(([id, error]) => `${id}: ${error.message}`).join(', ')
-          throw new Error(detail || 'refresh aborted')
-        }
-      }),
-  }
+export function createRefreshRegistry(ctx: ExtensionContext): RefreshModelsRegistry {
+  return () =>
+    ctx.modelRegistry.refresh({ allowNetwork: false }).then(result => {
+      if (result.aborted || result.errors.size > 0) {
+        const detail = [...result.errors.entries()].map(([id, error]) => `${id}: ${error.message}`).join(', ')
+        throw new Error(detail || 'refresh aborted')
+      }
+    })
 }
 
-/** Non-interactive mode has no live registry; the next Pi start reads models.json anyway. */
-export function createNoopRefresher(): Refresher {
-  return {
-    refresh: () => Promise.resolve(),
-  }
-}
-
-export function createLoaderStatusReporter(loader: RequestyStatusLoader): StatusReporter {
-  return {
-    set(message: string) {
-      loader.setMessage(message)
-    },
-  }
-}
-
-export function createConsoleNotifier(): Notifier {
-  return {
-    notify: (message: string, _level: NotificationLevel) => console.log(`[${_level}] ${message}`),
-  }
-}
-
-export function createConsoleStatusReporter(): StatusReporter {
-  return {
-    set: (message: string) => console.log(message),
-  }
-}
-
-export function createNoopConfirmer(): Confirmer {
-  return {
-    confirm: () => Promise.resolve(true),
-  }
+function createGetApiKey(ctx: ExtensionContext): GetApiKey {
+  return providerId => ctx.modelRegistry.getApiKeyForProvider(providerId)
 }
