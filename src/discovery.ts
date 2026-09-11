@@ -95,7 +95,7 @@ export async function evaluateDiscovery(
         provider,
         sortedResults,
         diffModels(existingModelIds, passing),
-        { ...settings, bannedModels: foundBannedModels },
+        { providerId: settings.providerId, bannedModels: foundBannedModels },
         env,
       )
     }

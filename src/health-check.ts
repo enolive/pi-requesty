@@ -38,6 +38,11 @@ export type HealthCheckProgress = {
   modelId: string
 }
 
+export type HealthCheckLogContext = {
+  providerId: string
+  bannedModels: string[]
+}
+
 export type HealthCheckOptions = {
   concurrency?: number
   timeoutMs?: number
@@ -97,11 +102,6 @@ export function formatHealthSummary(results: HealthCheckResult[]): string {
   const failedModels = failed.map(r => `- ${r.modelId}`).join('\n')
 
   return `Health check: ${passed.length} OK, ${failed.length} failed:\n${failedModels}\n`
-}
-
-export type HealthCheckLogContext = {
-  providerId: string
-  bannedModels: string[]
 }
 
 export function writeHealthCheckLog(
