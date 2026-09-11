@@ -4,8 +4,8 @@ import type {
   ModelRegistry,
   RegisteredCommand,
 } from '@earendil-works/pi-coding-agent'
-import type { RequestyStatusLoader } from '../../src/ui/requesty-status-loader.ts'
-import { DEFAULT_PROVIDER_ID } from '../../src/env'
+import type { RequestyStatusLoader } from '../../src/ui/requesty-status-loader'
+import { DEFAULT_PROVIDER_ID } from '../../src/settings'
 
 type RegisteredCommandOptions = Omit<RegisteredCommand, 'name' | 'sourceInfo'>
 type UiCustom = ExtensionCommandContext['ui']['custom']

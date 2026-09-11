@@ -3,8 +3,9 @@ import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeCommandContext, createFakePi } from './helpers/fake-pi'
 import { createTempDirectory, type TempDirectory } from './helpers/temp-agent'
-import { DEFAULT_PROVIDER_ID } from '../src/env'
+import { DEFAULT_PROVIDER_ID } from '../src/settings'
 import { server } from './setup'
+import type { Env } from '../src/env.ts'
 
 const COMMAND_NAME = 'requesty-discover'
 const BASE_URL = 'https://router.requesty.ai/v1'
@@ -14,11 +15,10 @@ let tempDirectory: TempDirectory
 beforeEach(async () => {
   tempDirectory = await createTempDirectory()
   vi.doMock('../src/env', () => ({
-    getEnv: () => ({
+    getEnv: (): Env => ({
       models_json_path: tempDirectory?.modelsJsonPath,
       health_check_log_path: tempDirectory?.healthCheckLogPath,
-      provider_id: DEFAULT_PROVIDER_ID,
-      health_check_mode: 'full',
+      settings_path: tempDirectory?.settingsPath,
     }),
   }))
 })

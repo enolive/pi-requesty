@@ -3,7 +3,7 @@
     "target": "ES2023",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
     "lib": ["ES2023"],
     "types": ["node"],
     "strict": true,

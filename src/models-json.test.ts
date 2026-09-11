@@ -3,8 +3,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Env } from './env'
-import { DEFAULT_PROVIDER_ID } from './env'
-import { diffModels, formatModelsDiffSummary, GetApiKey, getRequestyConfig, updateModelsJson } from './models-json'
+import { DEFAULT_PROVIDER_ID, type DiscoverySettings } from './settings'
+import { diffModels, formatModelsDiffSummary, type GetApiKey, getRequestyConfig, updateModelsJson } from './models-json'
 import { createTempDirectory, type TempDirectory } from '../test/helpers/temp-agent'
 
 const PROVIDER_ID = DEFAULT_PROVIDER_ID
@@ -25,27 +25,30 @@ describe('getRequestyConfig', () => {
 
   it('throws if models.json does not exist', async () => {
     const envConfig = createTestEnv(tempDirectory)
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey()
 
-    const readConfig = () => getRequestyConfig(getApiKey, envConfig)
+    const readConfig = () => getRequestyConfig(getApiKey, settings, envConfig)
 
     await expect(readConfig).rejects.toThrow(`models.json does not exist`)
   })
 
   it('throws if JSON is invalid', async () => {
     const envConfig = await createEnvWithModelsJsonContent(tempDirectory, '{')
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey()
 
-    const readConfig = () => getRequestyConfig(getApiKey, envConfig)
+    const readConfig = () => getRequestyConfig(getApiKey, settings, envConfig)
 
     await expect(readConfig).rejects.toThrow()
   })
 
   it('throws if schema is invalid', async () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, { providers: [] })
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey()
 
-    const readConfig = () => getRequestyConfig(getApiKey, envConfig)
+    const readConfig = () => getRequestyConfig(getApiKey, settings, envConfig)
 
     await expect(readConfig).rejects.toThrow(`${envConfig.models_json_path} is invalid`)
   })
@@ -54,9 +57,10 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: `these-are-not-the-droids-you-are-looking-for` } },
     })
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey('my_api_key')
 
-    const readConfig = await getRequestyConfig(getApiKey, envConfig)
+    const readConfig = await getRequestyConfig(getApiKey, settings, envConfig)
 
     expect(readConfig.provider.apiKey).toEqual('my_api_key')
   })
@@ -65,9 +69,10 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey(null)
 
-    const readConfig = () => getRequestyConfig(getApiKey, envConfig)
+    const readConfig = () => getRequestyConfig(getApiKey, settings, envConfig)
 
     await expect(readConfig).rejects.toThrow(`No API key found for provider ${PROVIDER_ID}`)
   })
@@ -76,9 +81,10 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { other: { apiKey: 'models-json-key' } },
     })
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey()
 
-    const readConfig = () => getRequestyConfig(getApiKey, envConfig)
+    const readConfig = () => getRequestyConfig(getApiKey, settings, envConfig)
 
     await expect(readConfig).rejects.toThrow(`${envConfig.models_json_path} does not define providers.${PROVIDER_ID}`)
   })
@@ -87,9 +93,10 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey()
 
-    const config = await getRequestyConfig(getApiKey, envConfig)
+    const config = await getRequestyConfig(getApiKey, settings, envConfig)
 
     expect(config.provider.name).toBe('Requesty')
   })
@@ -98,9 +105,10 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey()
 
-    const config = await getRequestyConfig(getApiKey, envConfig)
+    const config = await getRequestyConfig(getApiKey, settings, envConfig)
 
     expect(config.provider.baseUrl).toBe('https://router.requesty.ai/v1')
   })
@@ -114,9 +122,10 @@ describe('getRequestyConfig', () => {
         },
       },
     })
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey()
 
-    const config = await getRequestyConfig(getApiKey, envConfig)
+    const config = await getRequestyConfig(getApiKey, settings, envConfig)
 
     expect(config.provider.baseUrl).toBe('https://router.requesty.ai/v1')
   })
@@ -130,9 +139,10 @@ describe('getRequestyConfig', () => {
         },
       },
     })
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey()
 
-    const config = await getRequestyConfig(getApiKey, envConfig)
+    const config = await getRequestyConfig(getApiKey, settings, envConfig)
 
     expect(config.existingModelIds).toEqual(['requesty/model-a', 'requesty/model-b'])
   })
@@ -141,9 +151,10 @@ describe('getRequestyConfig', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key' } },
     })
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey()
 
-    const config = await getRequestyConfig(getApiKey, envConfig)
+    const config = await getRequestyConfig(getApiKey, settings, envConfig)
 
     expect(config.existingModelIds).toEqual([])
   })
@@ -207,11 +218,12 @@ describe('updateModelsJson', () => {
     const envConfig = await createEnvWithModelsJson(tempDirectory, {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key', models: [] } },
     })
+    const settings = createTestSettings()
     const getApiKey = createGetApiKey()
-    const data = (await getRequestyConfig(getApiKey, envConfig)).data
+    const data = (await getRequestyConfig(getApiKey, settings, envConfig)).data
     const models = [createModel({ id: 'requesty/model-a', name: 'Model A' })]
 
-    updateModelsJson(data, models, envConfig)
+    updateModelsJson(data, models, settings, envConfig)
 
     const written = await readModelsJsonFile(envConfig)
     expect(written).toMatchSnapshot()
@@ -232,9 +244,10 @@ describe('updateModelsJson', () => {
       },
     })
     const getApiKey = createGetApiKey()
-    const data = (await getRequestyConfig(getApiKey, envConfig)).data
+    const settings = createTestSettings()
+    const data = (await getRequestyConfig(getApiKey, settings, envConfig)).data
 
-    updateModelsJson(data, [createModel()], envConfig)
+    updateModelsJson(data, [createModel()], settings, envConfig)
 
     const written = await readModelsJsonFile(envConfig)
     expect(Object.keys(written.providers[PROVIDER_ID])).toEqual([
@@ -260,10 +273,11 @@ describe('updateModelsJson', () => {
       providers: { [PROVIDER_ID]: originalRequestyProvider },
     })
     const getApiKey = createGetApiKey()
-    const data = (await getRequestyConfig(getApiKey, envConfig)).data
+    const settings = createTestSettings()
+    const data = (await getRequestyConfig(getApiKey, settings, envConfig)).data
     const models = [createModel(), createModel(), createModel()]
 
-    updateModelsJson(data, models, envConfig)
+    updateModelsJson(data, models, settings, envConfig)
 
     const written = await readModelsJsonFile(envConfig)
     expect(written.providers[PROVIDER_ID]).toEqual(expect.objectContaining(originalRequestyProvider))
@@ -282,10 +296,11 @@ describe('updateModelsJson', () => {
       },
     })
     const registry = createGetApiKey()
-    const data = (await getRequestyConfig(registry, envConfig)).data
+    const settings = createTestSettings()
+    const data = (await getRequestyConfig(registry, settings, envConfig)).data
     const models = [createModel()]
 
-    updateModelsJson(data, models, envConfig)
+    updateModelsJson(data, models, settings, envConfig)
 
     const written = await readModelsJsonFile(envConfig)
     expect(written.providers.anthropic).toEqual(originalAnthropicProvider)
@@ -297,12 +312,13 @@ describe('updateModelsJson', () => {
       ...createTestEnv(tempDirectory),
       models_json_path: modelsJsonPath,
     }
+    const settings = createTestSettings()
     const data = {
       providers: { [PROVIDER_ID]: { apiKey: 'models-json-key', models: [] } },
     }
     const models = [createModel()]
 
-    updateModelsJson(data, models, envConfig)
+    updateModelsJson(data, models, settings, envConfig)
 
     const content = await fs.readFile(modelsJsonPath, 'utf8')
     expect(content).toContain('requesty/model')
@@ -313,8 +329,15 @@ function createTestEnv(tempDirectory: TempDirectory): Env {
   return {
     models_json_path: tempDirectory.modelsJsonPath,
     health_check_log_path: tempDirectory.healthCheckLogPath,
-    provider_id: DEFAULT_PROVIDER_ID,
-    health_check_mode: 'full',
+    settings_path: tempDirectory.settingsPath,
+  }
+}
+
+function createTestSettings(): DiscoverySettings {
+  return {
+    providerId: PROVIDER_ID,
+    healthCheckMode: 'full',
+    bannedModels: [],
   }
 }
 

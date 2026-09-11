@@ -38,6 +38,11 @@ export type HealthCheckProgress = {
   modelId: string
 }
 
+export type HealthCheckLogContext = {
+  providerId: string
+  bannedModels: string[]
+}
+
 export type HealthCheckOptions = {
   concurrency?: number
   timeoutMs?: number
@@ -103,6 +108,7 @@ export function writeHealthCheckLog(
   provider: Provider,
   results: HealthCheckResult[],
   diff: ModelsDiff,
+  context: HealthCheckLogContext,
   envConfig: Env = getEnv(),
 ): void {
   const passed = results.filter(r => r.ok)
@@ -110,11 +116,13 @@ export function writeHealthCheckLog(
   const lines = [
     `Requesty health check log`,
     `Timestamp: ${new Date().toISOString()}`,
-    `Provider: ${envConfig.provider_id}`,
+    `Provider: ${context.providerId}`,
     `Base URL: ${provider.baseUrl}`,
     `Total: ${results.length}`,
     `Passed: ${passed.length}`,
     `Failed: ${failed.length}`,
+    `Banned: ${context.bannedModels.length}`,
+    ...context.bannedModels.map(id => `- ${id}`),
     '',
     formatModelsDiffSummary(diff),
     '',

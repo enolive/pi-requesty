@@ -20,6 +20,7 @@ https://pi.dev/docs/latest/models#value-resolution[pi's full value resolution] c
 * Brief information about what was found, including added/removed models, health summary
 * Confirm before writing `models.json`, with a dry-run mode that only previews
 * A footer status line showing your monthly Requesty spend against your monthly limit
+* Optional Settings file in *json5* format
 
 == When and why use it
 
@@ -60,7 +61,7 @@ pi -e ./pi-requesty-discover
 == Configuration
 
 The extension reads the `requesty-export` provider from `~/.pi/agent/models.json`.
-You can override the provider id with the `REQUESTY_PROVIDER_ID` variable.
+You can override the provider id via the settings.
 
 Example:
 
@@ -83,23 +84,35 @@ IMPORTANT: Health checks are designed to use only a few tokens, but they still m
 
 On startup, the extension fetches `<baseUrl>/models` using the configured `apiKey` as the bearer token and registers discovered and healthy models with Pi.
 
+=== Discovery settings
+
+The discovery workflow reads optional settings from `requesty-discovery-settings.json5` in the Pi config directory (`PI_CODING_AGENT_DIR`).
+The file uses JSON5, so it supports comments. It is optional; missing settings default to empty.
+
+Example:
+
+[source,json5]
+----
+{
+  // override the default provider id
+  providerId: "requesty-export",
+  // configure the health check mode
+  healthCheckMode: "full", // or "basic", "off"
+  // models excluded from discovery; useful for models that keep failing health checks
+  bannedModels: [
+    // hangs on tool calls
+    'requesty/unstable-model',
+  ],
+}
+----
+
+Banned models are excluded before health checks run (so they cost no credits) and are removed from `models.json` on the next discovery write.
+
 === Environment variables
 
 [cols="1,1,1,1,2",options="header"]
 |===
 | Name | Required | Type | Default | Meaning
-
-| `REQUESTY_PROVIDER_ID`
-| no
-| `string`
-| `requesty-export`
-| The id of the provider.
-
-| `REQUESTY_HEALTH_CHECK_MODE`
-| no
-| `off`, `basic`, `full`
-| `full`
-| The health-check mode.
 
 | `PI_CODING_AGENT_DIR`
 | no

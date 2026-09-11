@@ -4,50 +4,43 @@ Short notes for non-obvious decisions: context, decision, why not the obvious al
 
 == Usage status stays on `setStatus` (shared, truncated footer line)
 
-Pi's `FooterComponent` joins all extensions' `setStatus` entries on one line and
-ellipsis-truncates the joined line to terminal width. No per-key layout, no wrap.
+Pi's `FooterComponent` joins all extensions' `setStatus` entries on one line and ellipsis-truncates the joined line to terminal width.
+No per-key layout, no wrap.
 
-`ctx.ui.setFooter(factory)` is replacement-only — it swaps the whole footer (pwd,
-tokens, context %, model, statuses), and the factory gets `footerData` but not
-token/model state. No "extra footer" API exists.
+`ctx.ui.setFooter(factory)` is replacement-only — it swaps the whole footer (pwd, tokens, context %, model, statuses), and the factory gets `footerData` but not token/model state.
+No "extra footer" API exists.
 
-Decision: keep `setStatus`. Revisit when the line overflows visibly with other
-extensions' statuses, or if the usage string grows past a typical width.
+Decision: keep `setStatus`.
+Revisit when the line overflows visibly with other extensions' statuses, or if the usage string grows past a typical width.
 
 == Hand-rolled `Try<T>` instead of an effects library
 
-Context: env loading and discovery evaluation both need a caught-error result value
-(`{ ok: true, value } | { ok: false, error }`). Libraries like Effect ship an
-industrial `Either`/`Effect.try` for exactly this.
+Context: env loading and discovery evaluation both need a caught-error result value (`{ ok: true, value } | { ok: false, error }`).
+Libraries like Effect ship an industrial `Either`/`Effect.try` for exactly this.
 
 Why not: Effect is a runtime, a generator DSL, and a worldview — not a utility.
-Two call sites in a Pi extension don't justify the dependency weight or the
-learning curve for contributors. The hand-rolled version is ~10 lines
-(`Try<T>`, `runCatching`, `runCatchingAsync`, named after Kotlin's `Result`),
-lives in `src/discovery.ts`, and documents intent just as well.
+Two call sites in a Pi extension don't justify the dependency weight or the learning curve for contributors.
+The hand-rolled version is ~10 lines (`Try<T>`, `runCatching`, `runCatchingAsync`, named after Kotlin's `Result`), lives in `utils.ts`, and documents intent just as well.
 
-Decision: keep the hand-rolled `Try<T>`. No `monads.ts` module either — rule of
-three. Revisit if the extension ever needs typed errors, retries, or resource
-scoping; that's the day Effect earns its place.
+Decision: keep the hand-rolled `Try<T>`.
+Revisit if the extension ever needs typed errors, retries, or resource scoping; that's the day Effect earns its place.
 
 == Not a provider — a models.json-writing extension
 
-Context: Requesty already works as a Pi provider via `models.json`. The temptation
-is to make this extension *be* the provider: read the model list from the Requesty
-API, hold it in memory, surface usage stats, let Pi manage the API key.
+Context: Requesty already works as a Pi provider via `models.json`.
+The temptation is to make this extension *be* the provider: read the model list from the Requesty API, hold it in memory, surface usage stats, let Pi manage the API key.
 
 Why not:
 
-- Health-checking is the core value and has no home in a provider. A provider serves
-  models; it doesn't vet them. The health check plus the diff/confirm/write flow is a
-  discovery-and-selection step, not serving.
-- A provider keeps its model list in-memory and refreshes occasionally. Here the
-  list is a persistent on-disk snapshot (`models.json`) — constant until you re-run
-  `/requesty-discover`. That matches the intent: an explicit, reviewed, user-confirmed write,
-  after which Pi's normal provider machinery serves the models.
+- Health-checking is the core value and has no home in a provider.
+A provider serves models; it doesn't vet them.
+The health check plus the diff/confirm/write flow is a discovery-and-selection step, not serving.
+- A provider keeps its model list in-memory and refreshes occasionally.
+Here the list is a persistent on-disk snapshot (`models.json`) — constant until you re-run
+`/requesty-discover`.
+That matches the intent: an explicit, reviewed, user-confirmed write, after which Pi's normal provider machinery serves the models.
 
-The provider-like parts (API model fetch, usage footer, wanting Pi-managed auth) are
-real, but the health check and the snapshot model break the provider fit.
+The provider-like parts (API model fetch, usage footer, wanting Pi-managed auth) are real, but the health check and the snapshot model break the provider fit.
 
 Decision: stay a `/requesty-discover` command that writes `models.json`.
 
