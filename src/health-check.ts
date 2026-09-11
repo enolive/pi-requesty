@@ -23,9 +23,11 @@ export type Provider = {
   apiKey: string
 }
 
+export type HealthCheckStatus = 'ok' | 'warning' | 'error'
+
 export type HealthCheckResult = {
   modelId: string
-  ok: boolean
+  status: HealthCheckStatus
   latencyMs: number
   error?: string
 }
@@ -92,16 +94,15 @@ export async function checkModels(
 }
 
 export function formatHealthSummary(results: HealthCheckResult[]): string {
-  const passed = results.filter(r => r.ok)
-  const failed = results.filter(r => !r.ok)
+  const passed = results.filter(r => r.status === 'ok')
+  const warned = results.filter(r => r.status === 'warning')
+  const failed = results.filter(r => r.status === 'error')
 
-  if (failed.length === 0) {
-    return `Health check: all ${passed.length} OK.`
-  }
+  const parts = [`${passed.length} OK`]
+  if (warned.length > 0) parts.push(`${warned.length} warning${warned.length === 1 ? '' : 's'}`)
+  if (failed.length > 0) parts.push(`${failed.length} failed`)
 
-  const failedModels = failed.map(r => `- ${r.modelId}`).join('\n')
-
-  return `Health check: ${passed.length} OK, ${failed.length} failed:\n${failedModels}\n`
+  return `Health check: ${parts.join(', ')}.`
 }
 
 export function writeHealthCheckLog(
@@ -111,8 +112,9 @@ export function writeHealthCheckLog(
   context: HealthCheckLogContext,
   envConfig: Env = getEnv(),
 ): void {
-  const passed = results.filter(r => r.ok)
-  const failed = results.filter(r => !r.ok)
+  const passed = results.filter(r => r.status === 'ok')
+  const warned = results.filter(r => r.status === 'warning')
+  const failed = results.filter(r => r.status === 'error')
   const lines = [
     `Requesty health check log`,
     `Timestamp: ${new Date().toISOString()}`,
@@ -120,6 +122,7 @@ export function writeHealthCheckLog(
     `Base URL: ${provider.baseUrl}`,
     `Total: ${results.length}`,
     `Passed: ${passed.length}`,
+    `Warnings: ${warned.length}`,
     `Failed: ${failed.length}`,
     `Banned: ${context.bannedModels.length}`,
     ...context.bannedModels.map(id => `- ${id}`),
@@ -128,20 +131,36 @@ export function writeHealthCheckLog(
     '',
   ]
 
-  if (failed.length === 0) {
+  if (warned.length === 0 && failed.length === 0) {
     lines.push('No failed models.')
   } else {
-    lines.push('Failed models:', '')
-    for (const result of failed) {
-      lines.push(
-        `Model: ${result.modelId}`,
-        `Latency: ${result.latencyMs}ms`,
-        'Error:',
-        result.error || 'Unknown error',
-        '',
-        '---',
-        '',
-      )
+    if (warned.length > 0) {
+      lines.push('Models with warnings:', '')
+      for (const result of warned) {
+        lines.push(
+          `Model: ${result.modelId}`,
+          `Latency: ${result.latencyMs}ms`,
+          'Error:',
+          result.error || 'Unknown error',
+          '',
+          '---',
+          '',
+        )
+      }
+    }
+    if (failed.length > 0) {
+      lines.push('Failed models:', '')
+      for (const result of failed) {
+        lines.push(
+          `Model: ${result.modelId}`,
+          `Latency: ${result.latencyMs}ms`,
+          'Error:',
+          result.error || 'Unknown error',
+          '',
+          '---',
+          '',
+        )
+      }
     }
   }
 
@@ -174,8 +193,10 @@ export async function postChatCompletion(
 
       if (!response.ok) {
         const text = await response.text().catch(() => '')
+        // rate limits are transient - a warning, not an error
+        const status: HealthCheckStatus = response.status === 429 ? 'warning' : 'error'
         return {
-          ok: false,
+          status,
           latencyMs,
           error: `HTTP ${response.status} ${response.statusText}${text ? `: ${text}` : ''}`,
         }
@@ -191,7 +212,7 @@ export async function postChatCompletion(
       }
       const attempts = attempt + 1
       return {
-        ok: false,
+        status: 'error',
         latencyMs: Date.now() - start,
         error: isTimeoutError(err)
           ? `Timed out after ${attempts} attempt(s); per-attempt timeout is ${healthCheckOptions.timeoutMs / 1000}s`
@@ -200,7 +221,7 @@ export async function postChatCompletion(
     }
   }
 
-  return { ok: false, latencyMs: Date.now() - start, error: 'Unknown error' }
+  return { status: 'error' as const, latencyMs: Date.now() - start, error: 'Unknown error' }
 }
 
 async function verifyFirstStreamChunk(body: ReadableStream<Uint8Array>, start: number): Promise<ModelCheckResult> {
@@ -227,14 +248,14 @@ async function verifyFirstStreamChunk(body: ReadableStream<Uint8Array>, start: n
         try {
           const parsed = JSON.parse(payload) as { choices?: unknown }
           if (Array.isArray(parsed.choices) && parsed.choices.length > 0) {
-            return { ok: true, latencyMs: Date.now() - start }
+            return { status: 'ok' as const, latencyMs: Date.now() - start }
           }
         } catch {
           // partial JSON or non-choices chunk — keep reading
         }
       }
     }
-    return { ok: false, latencyMs: Date.now() - start, error: 'Stream ended without content' }
+    return { status: 'error' as const, latencyMs: Date.now() - start, error: 'Stream ended without content' }
   } finally {
     await reader.cancel()
   }
@@ -256,7 +277,7 @@ async function checkModel(
     options,
   )
 
-  if (!basicResult.ok || !model.reasoning || !checkReasoning) {
+  if (basicResult.status !== 'ok' || !model.reasoning || !checkReasoning) {
     return basicResult
   }
 
@@ -284,16 +305,16 @@ async function checkModel(
     options,
   )
 
-  if (!reasoningResult.ok) {
+  if (reasoningResult.status !== 'ok') {
     return {
-      ok: false,
+      status: 'error',
       latencyMs: reasoningResult.latencyMs,
       error: `Reasoning/tool check failed: ${reasoningResult.error}`,
     }
   }
 
   return {
-    ok: true,
+    status: 'ok' as const,
     latencyMs: basicResult.latencyMs + reasoningResult.latencyMs,
   }
 }

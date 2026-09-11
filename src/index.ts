@@ -107,6 +107,7 @@ async function runInteractiveDiscoverWorkflow(
   }
 
   await finalizeDiscovery(evaluationResult.value, settings, env, ui, createRefreshRegistry(ctx))
+  await updateUsageStatus(ctx, settings, env)
 }
 
 async function runWithStatusUi<T>(

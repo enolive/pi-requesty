@@ -37,6 +37,7 @@ export type DiscoveryEvaluation = {
   dryRun: boolean
   modelCount: number
   failedCount: number
+  warningCount: number
   passing: ProviderModelConfig[]
   diff: ModelsDiff
   healthCheckSummary: string
@@ -71,6 +72,7 @@ export async function evaluateDiscovery(
 
   let diff: ModelsDiff
   let failedCount = 0
+  let warningCount = 0
   let passing: ProviderModelConfig[] = []
   let logNote = ''
   let healthCheckSummary = ''
@@ -84,10 +86,15 @@ export async function evaluateDiscovery(
         },
       })
       const sortedResults = healthResults.toSorted((a, b) => a.modelId.localeCompare(b.modelId))
-      failedCount = sortedResults.filter(r => !r.ok).length
+      failedCount = sortedResults.filter(r => r.status === 'error').length
+      warningCount = sortedResults.filter(r => r.status === 'warning').length
       passing = sortedResults.flatMap(r => {
         const model = modelsMap.get(r.modelId)
-        return r.ok && model ? [model] : []
+        if (!model) return []
+        if (r.status === 'ok') return [model]
+        // warnings are transient: assume that the error will go away and add them anyway
+        if (r.status === 'warning') return [model]
+        return []
       })
       healthCheckSummary = formatHealthSummary(sortedResults)
       writeHealthCheckLog(
@@ -109,6 +116,7 @@ export async function evaluateDiscovery(
     dryRun,
     modelCount: models.length,
     failedCount,
+    warningCount,
     passing,
     diff,
     healthCheckSummary,
@@ -196,9 +204,9 @@ function buildConfirmPrompt(evaluation: DiscoveryEvaluation): { title: string; m
 }
 
 function notificationLevel(evaluation: DiscoveryEvaluation): NotificationLevel {
-  if (evaluation.failedCount === 0) return 'info'
-  if (evaluation.failedCount < evaluation.modelCount) return 'warning'
-  return 'error'
+  if (evaluation.failedCount > 0) return 'error'
+  if (evaluation.warningCount > 0) return 'warning'
+  return 'info'
 }
 
 export function getArgumentCompletions(prefix: string): AutocompleteItem[] {
