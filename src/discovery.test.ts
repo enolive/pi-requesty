@@ -5,6 +5,7 @@ import * as HealthCheckModule from './health-check'
 import * as ModelsJsonModule from './models-json'
 import type { GetApiKey, ModelsDiff, ModelsJson } from './models-json'
 import * as RequestyApiModule from './requesty-api'
+import * as SettingsModule from './settings'
 import { shuffleCompareFn } from '../test/helpers/shuffle.ts'
 import { type Env, DEFAULT_PROVIDER_ID } from './env'
 import {
@@ -22,6 +23,7 @@ import {
 vi.mock('./health-check')
 vi.mock('./models-json')
 vi.mock('./requesty-api')
+vi.mock('./settings')
 
 type HealthCheckMode = 'off' | 'basic' | 'full'
 
@@ -32,10 +34,13 @@ type MockScenario = {
   getRequestyConfigError?: unknown
   discoverModelsError?: unknown
   diff?: ModelsDiff
+  bannedModels?: string[]
+  settingsError?: unknown
 }
 
 const MODELS_JSON_PATH = '/tmp/pi-requesty-home/.pi/agent/models.json'
 const HEALTH_CHECK_LOG_PATH = '/tmp/pi-requesty-home/.pi/agent/requesty-health-check.log'
+const SETTINGS_PATH = '/tmp/pi-requesty-home/.pi/agent/requesty-discovery-settings.json5'
 
 const provider = {
   name: 'Requesty',
@@ -244,6 +249,59 @@ describe('evaluateDiscovery', () => {
     ])
   })
 
+  it('excludes banned models from the health check and the passing list', async () => {
+    const modelA = createModel({ id: 'requesty/model-a' })
+    const bannedModel = createModel({ id: 'requesty/banned-model' })
+    const { checkModels } = configureMockedDependencies({
+      models: [modelA, bannedModel],
+      bannedModels: ['requesty/banned-model'],
+    })
+    const ui = createUi()
+
+    const evaluation = await evaluateDiscovery('', createEnv(), ui, getApiKey)
+
+    expect(checkModels).toHaveBeenCalledWith(expect.anything(), [modelA], expect.anything(), expect.anything())
+    expect(evaluation.passing).toEqual([modelA])
+    expect(evaluation.modelCount).toBe(1)
+  })
+
+  it('excludes banned models when health checks are off', async () => {
+    const modelA = createModel({ id: 'requesty/model-a' })
+    const bannedModel = createModel({ id: 'requesty/banned-model' })
+    configureMockedDependencies({
+      healthCheckMode: 'off',
+      models: [modelA, bannedModel],
+      bannedModels: ['requesty/banned-model'],
+    })
+    const ui = createUi()
+
+    const evaluation = await evaluateDiscovery('', createEnv({ health_check_mode: 'off' }), ui, getApiKey)
+
+    expect(evaluation.passing).toEqual([modelA])
+    expect(evaluation.modelCount).toBe(1)
+  })
+
+  it('does not call the health check when all models are banned', async () => {
+    const { checkModels } = configureMockedDependencies({
+      models: [createModel({ id: 'requesty/banned-model' })],
+      bannedModels: ['requesty/banned-model'],
+    })
+    const ui = createUi()
+
+    const evaluation = await evaluateDiscovery('', createEnv(), ui, getApiKey)
+
+    expect(checkModels).not.toHaveBeenCalled()
+    expect(evaluation.passing).toEqual([])
+    expect(evaluation.modelCount).toBe(0)
+  })
+
+  it('fails discovery when the settings file is invalid', async () => {
+    configureMockedDependencies({ settingsError: new Error('settings exploded') })
+    const ui = createUi()
+
+    await expect(evaluateDiscovery('', createEnv(), ui, getApiKey)).rejects.toThrow('settings exploded')
+  })
+
   it('includes the model diff even when health checks are off', async () => {
     const diff = { added: ['requesty/model-new'], removed: [] }
     const { diffModels } = configureMockedDependencies({ healthCheckMode: 'off', diff })
@@ -448,6 +506,7 @@ function createEnv(overrides: Partial<Env> = {}): Env {
   return {
     models_json_path: MODELS_JSON_PATH,
     health_check_log_path: HEALTH_CHECK_LOG_PATH,
+    settings_path: SETTINGS_PATH,
     provider_id: DEFAULT_PROVIDER_ID,
     health_check_mode: 'basic',
     ...overrides,
@@ -573,6 +632,13 @@ function configureMockedDependencies(scenario: MockScenario = {}) {
   formatHealthSummary.mockReturnValue('Health check summary.\n')
   const writeHealthCheckLog = vi.mocked(HealthCheckModule.writeHealthCheckLog)
 
+  const readDiscoverySettings = vi.mocked(SettingsModule.readDiscoverySettings)
+  if (scenario.settingsError) {
+    readDiscoverySettings.mockThrow(scenario.settingsError)
+  } else {
+    readDiscoverySettings.mockReturnValue({ bannedModels: scenario.bannedModels ?? [] })
+  }
+
   return {
     getRequestyConfig,
     updateModelsJson,
@@ -582,6 +648,7 @@ function configureMockedDependencies(scenario: MockScenario = {}) {
     checkModels,
     formatHealthSummary,
     writeHealthCheckLog,
+    readDiscoverySettings,
   }
 }
 

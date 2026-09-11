@@ -11,6 +11,7 @@ import {
 } from './models-json'
 import { checkModels, formatHealthSummary, writeHealthCheckLog } from './health-check'
 import { discoverModels } from './requesty-api'
+import { readDiscoverySettings } from './settings'
 
 const DRY_RUN_ARG = '--dry-run'
 
@@ -59,31 +60,36 @@ export async function evaluateDiscovery(
   const dryRun = args.split(' ').includes(DRY_RUN_ARG)
 
   const { data, provider, existingModelIds } = await getRequestyConfig(getApiKey, env)
-  const models = await discoverModels(provider)
+  const settings = readDiscoverySettings(env)
+  const bannedModels = new Set(settings.bannedModels)
+  const allModels = await discoverModels(provider)
+  const models = allModels.filter(model => !bannedModels.has(model.id))
   const modelsMap = new Map(models.map(m => [m.id, m]))
 
   let diff: ModelsDiff
   let failedCount = 0
-  let passing: ProviderModelConfig[]
+  let passing: ProviderModelConfig[] = []
   let logNote = ''
   let healthCheckSummary = ''
 
   if (env.health_check_mode !== 'off') {
-    ui.setStatus(`Checking models 0/${models.length}...`)
-    const healthResults = await checkModels(provider, models, env.health_check_mode === 'full', {
-      onProgress: ({ completed, total }) => {
-        ui.setStatus(`Checking models ${completed}/${total}...`)
-      },
-    })
-    const sortedResults = healthResults.toSorted((a, b) => a.modelId.localeCompare(b.modelId))
-    failedCount = sortedResults.filter(r => !r.ok).length
-    passing = sortedResults.flatMap(r => {
-      const model = modelsMap.get(r.modelId)
-      return r.ok && model ? [model] : []
-    })
+    if (models.length > 0) {
+      ui.setStatus(`Checking models 0/${models.length}...`)
+      const healthResults = await checkModels(provider, models, env.health_check_mode === 'full', {
+        onProgress: ({ completed, total }) => {
+          ui.setStatus(`Checking models ${completed}/${total}...`)
+        },
+      })
+      const sortedResults = healthResults.toSorted((a, b) => a.modelId.localeCompare(b.modelId))
+      failedCount = sortedResults.filter(r => !r.ok).length
+      passing = sortedResults.flatMap(r => {
+        const model = modelsMap.get(r.modelId)
+        return r.ok && model ? [model] : []
+      })
+      healthCheckSummary = formatHealthSummary(sortedResults)
+      writeHealthCheckLog(provider, sortedResults, diffModels(existingModelIds, passing), env)
+    }
     diff = diffModels(existingModelIds, passing)
-    healthCheckSummary = formatHealthSummary(sortedResults)
-    writeHealthCheckLog(provider, sortedResults, diff, env)
     logNote = `Full health check log: ${env.health_check_log_path}\n`
   } else {
     passing = models

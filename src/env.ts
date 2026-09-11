@@ -10,6 +10,7 @@ export const DEFAULT_PROVIDER_ID = 'requesty-export'
 export type Env = {
   models_json_path: string
   health_check_log_path: string
+  settings_path: string
   provider_id: string
   health_check_mode: z.infer<typeof HealthCheckModeSchema>
 }
@@ -25,6 +26,7 @@ export function getEnv(): Env {
   return {
     models_json_path: path.join(agentPath, 'models.json'),
     health_check_log_path: path.join(agentPath, 'requesty-health-check.log'),
+    settings_path: path.join(agentPath, 'requesty-discovery-settings.json5'),
     provider_id: envVars.REQUESTY_PROVIDER_ID ?? DEFAULT_PROVIDER_ID,
     health_check_mode: result.data,
   }

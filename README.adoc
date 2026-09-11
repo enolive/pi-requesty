@@ -83,6 +83,26 @@ IMPORTANT: Health checks are designed to use only a few tokens, but they still m
 
 On startup, the extension fetches `<baseUrl>/models` using the configured `apiKey` as the bearer token and registers discovered and healthy models with Pi.
 
+=== Discovery settings
+
+The discovery workflow reads optional settings from `requesty-discovery-settings.json5` in the Pi config directory (`PI_CODING_AGENT_DIR`).
+The file uses JSON5, so it supports comments. It is optional; missing settings default to empty.
+
+Example:
+
+[source,json5]
+----
+{
+  // models excluded from discovery; useful for models that keep failing health checks
+  bannedModels: [
+    // hangs on tool calls
+    'requesty/unstable-model',
+  ],
+}
+----
+
+Banned models are excluded before health checks run (so they cost no credits) and are removed from `models.json` on the next discovery write.
+
 === Environment variables
 
 [cols="1,1,1,1,2",options="header"]

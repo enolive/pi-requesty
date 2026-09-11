@@ -554,6 +554,7 @@ describe('health summary and log output', () => {
     health_check_log_path: '',
     health_check_mode: 'basic',
     models_json_path: '',
+    settings_path: '',
     provider_id: DEFAULT_PROVIDER_ID,
   }
 

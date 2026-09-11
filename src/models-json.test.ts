@@ -313,6 +313,7 @@ function createTestEnv(tempDirectory: TempDirectory): Env {
   return {
     models_json_path: tempDirectory.modelsJsonPath,
     health_check_log_path: tempDirectory.healthCheckLogPath,
+    settings_path: tempDirectory.settingsPath,
     provider_id: DEFAULT_PROVIDER_ID,
     health_check_mode: 'full',
   }

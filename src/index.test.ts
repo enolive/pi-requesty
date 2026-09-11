@@ -33,6 +33,7 @@ type TestCommand = Omit<RegisteredCommand, 'name' | 'sourceInfo'>
 
 const MODELS_JSON_PATH = '/tmp/pi-requesty-home/.pi/agent/models.json'
 const HEALTH_CHECK_LOG_PATH = '/tmp/pi-requesty-home/.pi/agent/requesty-health-check.log'
+const SETTINGS_PATH = '/tmp/pi-requesty-home/.pi/agent/requesty-discovery-settings.json5'
 
 const provider = {
   name: 'Requesty',
@@ -611,6 +612,7 @@ function mockEnv(getEnvError?: unknown): Try<Env> {
   const mockedEnv: Env = {
     models_json_path: MODELS_JSON_PATH,
     health_check_log_path: HEALTH_CHECK_LOG_PATH,
+    settings_path: SETTINGS_PATH,
     provider_id: REQUESTY_PROVIDER_ID,
     health_check_mode: 'basic',
   }
