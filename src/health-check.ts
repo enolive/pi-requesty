@@ -3,7 +3,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getEnv, type Env } from './env'
 import { formatModelsDiffSummary, type ModelsDiff } from './models-json'
-import { DiscoverySettings } from './settings.ts'
 
 const HEALTH_CHECK_CONCURRENCY = 10
 const HEALTH_CHECK_TIMEOUT_MS = 15_000
@@ -100,11 +99,16 @@ export function formatHealthSummary(results: HealthCheckResult[]): string {
   return `Health check: ${passed.length} OK, ${failed.length} failed:\n${failedModels}\n`
 }
 
+export type HealthCheckLogContext = {
+  providerId: string
+  bannedModels: string[]
+}
+
 export function writeHealthCheckLog(
   provider: Provider,
   results: HealthCheckResult[],
   diff: ModelsDiff,
-  settings: DiscoverySettings,
+  context: HealthCheckLogContext,
   envConfig: Env = getEnv(),
 ): void {
   const passed = results.filter(r => r.ok)
@@ -112,11 +116,13 @@ export function writeHealthCheckLog(
   const lines = [
     `Requesty health check log`,
     `Timestamp: ${new Date().toISOString()}`,
-    `Provider: ${settings.providerId}`,
+    `Provider: ${context.providerId}`,
     `Base URL: ${provider.baseUrl}`,
     `Total: ${results.length}`,
     `Passed: ${passed.length}`,
     `Failed: ${failed.length}`,
+    `Banned: ${context.bannedModels.length}`,
+    ...context.bannedModels.map(id => `- ${id}`),
     '',
     formatModelsDiffSummary(diff),
     '',

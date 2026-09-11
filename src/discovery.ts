@@ -1,17 +1,17 @@
-import { ProviderModelConfig } from '@earendil-works/pi-coding-agent'
+import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 import { type Env } from './env'
 import {
+  type GetApiKey,
+  type ModelsDiff,
+  type ModelsJson,
   diffModels,
   formatModelsDiffSummary,
-  GetApiKey,
   getRequestyConfig,
-  type ModelsDiff,
-  ModelsJson,
   updateModelsJson,
 } from './models-json'
 import { checkModels, formatHealthSummary, writeHealthCheckLog } from './health-check'
 import { discoverModels } from './requesty-api'
-import { DiscoverySettings } from './settings'
+import type { DiscoverySettings } from './settings'
 
 const DRY_RUN_ARG = '--dry-run'
 
@@ -63,6 +63,10 @@ export async function evaluateDiscovery(
   const { data, provider, existingModelIds } = await getRequestyConfig(getApiKey, settings, env)
   const bannedModels = new Set(settings.bannedModels)
   const allModels = await discoverModels(provider)
+  const foundBannedModels = allModels
+    .filter(model => bannedModels.has(model.id))
+    .map(model => model.id)
+    .toSorted()
   const models = allModels.filter(model => !bannedModels.has(model.id))
   const modelsMap = new Map(models.map(m => [m.id, m]))
 
@@ -87,7 +91,13 @@ export async function evaluateDiscovery(
         return r.ok && model ? [model] : []
       })
       healthCheckSummary = formatHealthSummary(sortedResults)
-      writeHealthCheckLog(provider, sortedResults, diffModels(existingModelIds, passing), settings, env)
+      writeHealthCheckLog(
+        provider,
+        sortedResults,
+        diffModels(existingModelIds, passing),
+        { ...settings, bannedModels: foundBannedModels },
+        env,
+      )
     }
     diff = diffModels(existingModelIds, passing)
     logNote = `Full health check log: ${env.health_check_log_path}\n`

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { type Env } from './env'
 import { DEFAULT_PROVIDER_ID, readDiscoverySettings } from './settings'
-import { createTempDirectory, TempDirectory } from '../test/helpers/temp-agent.ts'
+import { createTempDirectory, type TempDirectory } from '../test/helpers/temp-agent'
 
 describe('readDiscoverySettings', () => {
   let tempDir: TempDirectory

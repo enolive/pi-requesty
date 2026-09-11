@@ -3,18 +3,19 @@ import fs from 'node:fs/promises'
 import { delay, http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  type HealthCheckLogContext,
+  type HealthCheckProgress,
+  type HealthCheckResult,
+  type Provider,
   checkModels,
   formatHealthSummary,
-  HealthCheckProgress,
-  type HealthCheckResult,
   postChatCompletion,
-  type Provider,
   writeHealthCheckLog,
 } from './health-check'
 import { createTempDirectory, type TempDirectory } from '../test/helpers/temp-agent'
 import { server } from '../test/setup'
-import { Env } from './env'
-import { DEFAULT_PROVIDER_ID, DiscoverySettings } from './settings'
+import type { Env } from './env'
+import { DEFAULT_PROVIDER_ID } from './settings'
 
 const PROVIDER: Provider = {
   baseUrl: 'https://router.requesty.ai/v1',
@@ -556,7 +557,10 @@ describe('health summary and log output', () => {
     models_json_path: '',
     settings_path: '',
   }
-  const settings = createTestSettings()
+  const logContext: HealthCheckLogContext = {
+    providerId: DEFAULT_PROVIDER_ID,
+    bannedModels: [],
+  }
 
   beforeEach(async () => {
     tempDirectory = await createTempDirectory()
@@ -608,7 +612,7 @@ describe('health summary and log output', () => {
     ]
     const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
 
-    writeHealthCheckLog(PROVIDER, partialFailureResults, { added: [], removed: [] }, settings, env)
+    writeHealthCheckLog(PROVIDER, partialFailureResults, { added: [], removed: [] }, logContext, env)
 
     const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
     expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
@@ -621,7 +625,21 @@ describe('health summary and log output', () => {
     ]
     const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
 
-    writeHealthCheckLog(PROVIDER, successfulResults, { added: [], removed: [] }, settings, env)
+    writeHealthCheckLog(PROVIDER, successfulResults, { added: [], removed: [] }, logContext, env)
+
+    const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
+    expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
+  })
+
+  it('writes banned models into the log', async () => {
+    const results = [createHealthCheckResult({ modelId: 'requesty/model-a', ok: true })]
+    const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
+    const contextWithBans: HealthCheckLogContext = {
+      ...logContext,
+      bannedModels: ['requesty/unstable-model', 'requesty/another-unstable'],
+    }
+
+    writeHealthCheckLog(PROVIDER, results, { added: [], removed: [] }, contextWithBans, env)
 
     const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
     expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
@@ -635,7 +653,7 @@ describe('health summary and log output', () => {
       PROVIDER,
       results,
       { added: ['requesty/model-a', 'requesty/model-new'], removed: ['requesty/model-old'] },
-      settings,
+      logContext,
       env,
     )
 
@@ -694,12 +712,4 @@ function sseRawResponse(body: string) {
 
 function sseResponse(chunks: unknown[]) {
   return sseRawResponse(sseBody(chunks))
-}
-
-function createTestSettings(): DiscoverySettings {
-  return {
-    providerId: DEFAULT_PROVIDER_ID,
-    healthCheckMode: 'full',
-    bannedModels: [],
-  }
 }

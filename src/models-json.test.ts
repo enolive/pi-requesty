@@ -3,8 +3,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Env } from './env'
-import { DEFAULT_PROVIDER_ID, DiscoverySettings } from './settings'
-import { diffModels, formatModelsDiffSummary, GetApiKey, getRequestyConfig, updateModelsJson } from './models-json'
+import { DEFAULT_PROVIDER_ID, type DiscoverySettings } from './settings'
+import { diffModels, formatModelsDiffSummary, type GetApiKey, getRequestyConfig, updateModelsJson } from './models-json'
 import { createTempDirectory, type TempDirectory } from '../test/helpers/temp-agent'
 
 const PROVIDER_ID = DEFAULT_PROVIDER_ID

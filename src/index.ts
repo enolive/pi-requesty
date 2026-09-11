@@ -1,21 +1,21 @@
-import { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from '@earendil-works/pi-coding-agent'
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { type Env, getEnv } from './env'
-import { GetApiKey, getRequestyConfig } from './models-json'
+import { type GetApiKey, getRequestyConfig } from './models-json'
 import { type ApiKeyInfo, fetchApiUsage } from './requesty-api'
-import { RequestyStatusLoader } from './ui/requesty-status-loader.ts'
+import { RequestyStatusLoader } from './ui/requesty-status-loader'
 import {
   type DiscoveryEvaluation,
   type DiscoveryUi,
+  type RefreshModelsRegistry,
   evaluateDiscovery,
   finalizeDiscovery,
   formatDiscoveryFailure,
   getArgumentCompletions,
-  RefreshModelsRegistry,
   runCatching,
   runCatchingAsync,
   type Try,
 } from './discovery'
-import { DiscoverySettings, readDiscoverySettings } from './settings.ts'
+import { type DiscoverySettings, readDiscoverySettings } from './settings'
 
 export { type Try }
 

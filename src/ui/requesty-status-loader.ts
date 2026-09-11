@@ -1,5 +1,5 @@
 import { DynamicBorder, Theme } from '@earendil-works/pi-coding-agent'
-import { Container, Loader, Spacer, TUI } from '@earendil-works/pi-tui'
+import { Container, Loader, Spacer, type TUI } from '@earendil-works/pi-tui'
 
 /**
  * A loader that allows us to change the displayed message.

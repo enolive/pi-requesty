@@ -5,7 +5,7 @@ import { createFakeCommandContext, createFakePi } from './helpers/fake-pi'
 import { createTempDirectory, type TempDirectory } from './helpers/temp-agent'
 import { DEFAULT_PROVIDER_ID } from '../src/settings'
 import { server } from './setup'
-import { Env } from '../src/env.ts'
+import type { Env } from '../src/env.ts'
 
 const COMMAND_NAME = 'requesty-discover'
 const BASE_URL = 'https://router.requesty.ai/v1'

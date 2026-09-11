@@ -89,12 +89,32 @@ Base URL: https://router.requesty.ai/v1
 Total: 1
 Passed: 1
 Failed: 0
+Banned: 0
 
 Added models:
 - requesty/model-a
 - requesty/model-new
 Removed models:
 - requesty/model-old
+
+No failed models.
+"
+`;
+
+exports[`health summary and log output > writes banned models into the log 1`] = `
+"Requesty health check log
+Timestamp: <timestamp>
+Provider: requesty-export
+Base URL: https://router.requesty.ai/v1
+Total: 1
+Passed: 1
+Failed: 0
+Banned: 2
+- requesty/unstable-model
+- requesty/another-unstable
+
+No added models.
+No removed models.
 
 No failed models.
 "
@@ -108,6 +128,7 @@ Base URL: https://router.requesty.ai/v1
 Total: 3
 Passed: 1
 Failed: 2
+Banned: 0
 
 No added models.
 No removed models.
@@ -139,6 +160,7 @@ Base URL: https://router.requesty.ai/v1
 Total: 2
 Passed: 2
 Failed: 0
+Banned: 0
 
 No added models.
 No removed models.

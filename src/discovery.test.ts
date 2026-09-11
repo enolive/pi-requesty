@@ -17,7 +17,7 @@ import {
   runCatching,
   runCatchingAsync,
 } from './discovery'
-import { DEFAULT_PROVIDER_ID, DiscoverySettings } from './settings'
+import { DEFAULT_PROVIDER_ID, type DiscoverySettings } from './settings'
 
 vi.mock('./health-check')
 vi.mock('./models-json')
@@ -202,6 +202,21 @@ describe('evaluateDiscovery', () => {
     ])
     const [, logHealthChecks] = writeHealthCheckLog.mock.calls[0]
     expect(logHealthChecks.map(modelId)).toEqual(summaryModelIds)
+  })
+
+  it('writes only found banned models into the health check log', async () => {
+    const modelA = createModel({ id: 'requesty/model-a' })
+    const bannedModel = createModel({ id: 'requesty/banned-model' })
+    const { writeHealthCheckLog } = configureMockedDependencies({
+      models: [modelA, bannedModel],
+    })
+    const ui = createUi()
+    const settings = createSettings({ bannedModels: ['requesty/banned-model', 'requesty/stale-ban'] })
+
+    await evaluateDiscovery('', settings, createEnv(), ui, getApiKey)
+
+    const [, , , contextArg] = writeHealthCheckLog.mock.calls[0]
+    expect(contextArg.bannedModels).toEqual(['requesty/banned-model'])
   })
 
   it('sorts passing models deterministically', async () => {

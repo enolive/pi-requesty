@@ -1,9 +1,9 @@
-import { ProviderConfig, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
+import type { ProviderConfig, ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 import fs from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
 import { type Env, getEnv } from './env'
-import { DiscoverySettings } from './settings.ts'
+import type { DiscoverySettings } from './settings'
 
 const DEFAULT_BASE_URL = 'https://router.requesty.ai/v1'
 const DEFAULT_NAME = 'Requesty'
