@@ -17,10 +17,15 @@ describe('readDiscoverySettings', () => {
     await tempDir.clean()
   })
 
-  it('returns default settings when the file does not exist', () => {
+  it('returns default settings and writes a commented default file when none exists', async () => {
     const settings = readDiscoverySettings(env)
 
     expect(settings).toEqual({ bannedModels: [], healthCheckMode: 'full', providerId: DEFAULT_PROVIDER_ID })
+    const written = await fs.readFile(env.settings_path, 'utf8')
+    expect(written).toMatchSnapshot()
+    // the written file must itself parse as valid settings
+    const reread = readDiscoverySettings(env)
+    expect(reread).toEqual(settings)
   })
 
   it('reads banned models from a json5 file with comments', async () => {

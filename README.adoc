@@ -87,13 +87,16 @@ On startup, the extension fetches `<baseUrl>/models` using the configured `apiKe
 === Discovery settings
 
 The discovery workflow reads optional settings from `requesty-discovery-settings.json5` in the Pi config directory (`PI_CODING_AGENT_DIR`).
-The file uses JSON5, so it supports comments. It is optional; missing settings default to empty.
+The file uses JSON5, so it supports comments.
+It is optional. When missing, it will be created including defaults.
 
 Example:
 
 [source,json5]
 ----
 {
+  "$schema": "https://raw.githubusercontent.com/enolive/pi-requesty/main/docs/requesty-discovery-settings.schema.json",
+
   // override the default provider id
   providerId: "requesty-export",
   // configure the health check mode

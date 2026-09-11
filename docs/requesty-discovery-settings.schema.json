@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "bannedModels": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "healthCheckMode": {
+      "default": "full",
+      "type": "string",
+      "enum": [
+        "off",
+        "basic",
+        "full"
+      ]
+    },
+    "providerId": {
+      "default": "requesty-export",
+      "type": "string"
+    }
+  },
+  "required": [
+    "bannedModels",
+    "healthCheckMode",
+    "providerId"
+  ],
+  "additionalProperties": false,
+  "$id": "https://raw.githubusercontent.com/enolive/pi-requesty/main/docs/requesty-discovery-settings.schema.json",
+  "title": "Requesty discovery settings",
+  "description": "Settings for the pi-requesty discovery extension. The file uses JSON5, so comments are allowed."
+}

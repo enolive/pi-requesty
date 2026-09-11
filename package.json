@@ -34,7 +34,10 @@
     "test:unit:coverage": "vitest run src --coverage",
     "test:integration": "vitest run test/integration.test.ts",
     "test:watch": "vitest",
-    "prepack": "downdoc README.adoc"
+    "prepack": "downdoc README.adoc",
+    "preversion": "npm run check && npm test",
+    "version": "npm run generate:schema && git add docs/requesty-discovery-settings.schema.json",
+    "generate:schema": "jiti scripts/generate-settings-schema.ts"
   },
   "license": "MIT",
   "peerDependencies": {
