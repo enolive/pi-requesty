@@ -5,11 +5,9 @@ import * as HealthCheckModule from './health-check'
 import * as ModelsJsonModule from './models-json'
 import type { GetApiKey, ModelsDiff, ModelsJson } from './models-json'
 import * as RequestyApiModule from './requesty-api'
-import * as SettingsModule from './settings'
-import { shuffleCompareFn } from '../test/helpers/shuffle.ts'
-import { type Env, DEFAULT_PROVIDER_ID } from './env'
+import { shuffleCompareFn } from '../test/helpers/shuffle'
+import { type Env } from './env'
 import {
-  complainOnBrokenEnv,
   type DiscoveryEvaluation,
   type DiscoveryUi,
   evaluateDiscovery,
@@ -19,6 +17,7 @@ import {
   runCatching,
   runCatchingAsync,
 } from './discovery'
+import { DEFAULT_PROVIDER_ID, DiscoverySettings } from './settings'
 
 vi.mock('./health-check')
 vi.mock('./models-json')
@@ -34,8 +33,6 @@ type MockScenario = {
   getRequestyConfigError?: unknown
   discoverModelsError?: unknown
   diff?: ModelsDiff
-  bannedModels?: string[]
-  settingsError?: unknown
 }
 
 const MODELS_JSON_PATH = '/tmp/pi-requesty-home/.pi/agent/models.json'
@@ -111,30 +108,12 @@ describe('formatDiscoveryFailure', () => {
   })
 })
 
-describe('complainOnBrokenEnv', () => {
-  it('notifies when env failed to load', () => {
-    const ui = createUi()
-
-    complainOnBrokenEnv(ui, { ok: false, error: new Error('env load failed') })
-
-    expect(ui.notifications).toEqual([{ message: 'failed to load env: env load failed', level: 'error' }])
-  })
-
-  it('does nothing when env loaded fine', () => {
-    const ui = createUi()
-
-    complainOnBrokenEnv(ui, { ok: true, value: createEnv() })
-
-    expect(ui.notifications).toEqual([])
-  })
-})
-
 describe('evaluateDiscovery', () => {
   it('uses the api key resolved by the given getApiKey function', async () => {
     const { discoverModels } = configureMockedDependencies()
     const ui = createUi()
 
-    await evaluateDiscovery('', createEnv(), ui, getApiKey)
+    await evaluateDiscovery('', createSettings(), createEnv(), ui, getApiKey)
 
     expect(discoverModels).toHaveBeenCalledWith({ ...provider, apiKey: 'test-api-key' })
   })
@@ -144,7 +123,7 @@ describe('evaluateDiscovery', () => {
     const ui = createUi()
     const customGetApiKey: GetApiKey = () => Promise.resolve('custom-api-key')
 
-    await evaluateDiscovery('', createEnv(), ui, customGetApiKey)
+    await evaluateDiscovery('', createSettings(), createEnv(), ui, customGetApiKey)
 
     expect(discoverModels).toHaveBeenCalledWith({ ...provider, apiKey: 'custom-api-key' })
   })
@@ -154,7 +133,7 @@ describe('evaluateDiscovery', () => {
     configureMockedDependencies({ models })
     const ui = createUi()
 
-    await evaluateDiscovery('', createEnv(), ui, getApiKey)
+    await evaluateDiscovery('', createSettings(), createEnv(), ui, getApiKey)
 
     expect(ui.statuses).toEqual([
       'Discovering Requesty models...',
@@ -173,7 +152,7 @@ describe('evaluateDiscovery', () => {
     configureMockedDependencies({ models, healthResults })
     const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv(), ui, getApiKey)
+    const evaluation = await evaluateDiscovery('', createSettings(), createEnv(), ui, getApiKey)
 
     expect(evaluation.passing).toEqual(models)
     expect(evaluation.failedCount).toBe(0)
@@ -190,7 +169,7 @@ describe('evaluateDiscovery', () => {
     configureMockedDependencies({ models: [passingModel, failingModel], healthResults })
     const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv(), ui, getApiKey)
+    const evaluation = await evaluateDiscovery('', createSettings(), createEnv(), ui, getApiKey)
 
     expect(evaluation.passing).toEqual([passingModel])
     expect(evaluation.failedCount).toBe(1)
@@ -211,7 +190,7 @@ describe('evaluateDiscovery', () => {
     })
     const ui = createUi()
 
-    await evaluateDiscovery('', createEnv(), ui, getApiKey)
+    await evaluateDiscovery('', createSettings(), createEnv(), ui, getApiKey)
 
     const modelId = (healthCheck: HealthCheckResult) => healthCheck.modelId
     const [summaryHealthChecks] = formatHealthSummary.mock.calls[0]
@@ -240,7 +219,7 @@ describe('evaluateDiscovery', () => {
     })
     const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv(), ui, getApiKey)
+    const evaluation = await evaluateDiscovery('', createSettings(), createEnv(), ui, getApiKey)
 
     expect(evaluation.passing.map(m => m.id)).toEqual([
       'requesty/passing-model-1',
@@ -252,13 +231,13 @@ describe('evaluateDiscovery', () => {
   it('excludes banned models from the health check and the passing list', async () => {
     const modelA = createModel({ id: 'requesty/model-a' })
     const bannedModel = createModel({ id: 'requesty/banned-model' })
+    const settings = createSettings({ bannedModels: ['requesty/banned-model'] })
     const { checkModels } = configureMockedDependencies({
       models: [modelA, bannedModel],
-      bannedModels: ['requesty/banned-model'],
     })
     const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv(), ui, getApiKey)
+    const evaluation = await evaluateDiscovery('', settings, createEnv(), ui, getApiKey)
 
     expect(checkModels).toHaveBeenCalledWith(expect.anything(), [modelA], expect.anything(), expect.anything())
     expect(evaluation.passing).toEqual([modelA])
@@ -268,38 +247,31 @@ describe('evaluateDiscovery', () => {
   it('excludes banned models when health checks are off', async () => {
     const modelA = createModel({ id: 'requesty/model-a' })
     const bannedModel = createModel({ id: 'requesty/banned-model' })
+    const settings = createSettings({ bannedModels: ['requesty/banned-model'], healthCheckMode: 'off' })
     configureMockedDependencies({
       healthCheckMode: 'off',
       models: [modelA, bannedModel],
-      bannedModels: ['requesty/banned-model'],
     })
     const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv({ health_check_mode: 'off' }), ui, getApiKey)
+    const evaluation = await evaluateDiscovery('', settings, createEnv(), ui, getApiKey)
 
     expect(evaluation.passing).toEqual([modelA])
     expect(evaluation.modelCount).toBe(1)
   })
 
   it('does not call the health check when all models are banned', async () => {
+    const settings = createSettings({ bannedModels: ['requesty/banned-model'] })
     const { checkModels } = configureMockedDependencies({
       models: [createModel({ id: 'requesty/banned-model' })],
-      bannedModels: ['requesty/banned-model'],
     })
     const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv(), ui, getApiKey)
+    const evaluation = await evaluateDiscovery('', settings, createEnv(), ui, getApiKey)
 
     expect(checkModels).not.toHaveBeenCalled()
     expect(evaluation.passing).toEqual([])
     expect(evaluation.modelCount).toBe(0)
-  })
-
-  it('fails discovery when the settings file is invalid', async () => {
-    configureMockedDependencies({ settingsError: new Error('settings exploded') })
-    const ui = createUi()
-
-    await expect(evaluateDiscovery('', createEnv(), ui, getApiKey)).rejects.toThrow('settings exploded')
   })
 
   it('includes the model diff even when health checks are off', async () => {
@@ -307,7 +279,13 @@ describe('evaluateDiscovery', () => {
     const { diffModels } = configureMockedDependencies({ healthCheckMode: 'off', diff })
     const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('', createEnv({ health_check_mode: 'off' }), ui, getApiKey)
+    const evaluation = await evaluateDiscovery(
+      '',
+      createSettings({ healthCheckMode: 'off' }),
+      createEnv(),
+      ui,
+      getApiKey,
+    )
 
     expect(diffModels).toHaveBeenCalled()
     expect(evaluation.diff).toEqual(diff)
@@ -317,21 +295,29 @@ describe('evaluateDiscovery', () => {
     configureMockedDependencies({ getRequestyConfigError: new Error('models.json exploded') })
     const ui = createUi()
 
-    await expect(evaluateDiscovery('', createEnv(), ui, getApiKey)).rejects.toThrow('models.json exploded')
+    await expect(evaluateDiscovery('', createSettings(), createEnv(), ui, getApiKey)).rejects.toThrow(
+      'models.json exploded',
+    )
   })
 
   it('propagates discoverModels errors', async () => {
     configureMockedDependencies({ discoverModelsError: new Error('bad day') })
     const ui = createUi()
 
-    await expect(evaluateDiscovery('', createEnv(), ui, getApiKey)).rejects.toThrow('bad day')
+    await expect(evaluateDiscovery('', createSettings(), createEnv(), ui, getApiKey)).rejects.toThrow('bad day')
   })
 
   it('detects dry-run from args', async () => {
     configureMockedDependencies()
     const ui = createUi()
 
-    const evaluation = await evaluateDiscovery('--dry-run', createEnv({ health_check_mode: 'off' }), ui, getApiKey)
+    const evaluation = await evaluateDiscovery(
+      '--dry-run',
+      createSettings({ healthCheckMode: 'off' }),
+      createEnv(),
+      ui,
+      getApiKey,
+    )
 
     expect(evaluation.dryRun).toBe(true)
   })
@@ -342,7 +328,7 @@ describe('finalizeDiscovery', () => {
     const { updateModelsJson } = configureMockedDependencies()
     const ui = createUi()
 
-    await finalizeDiscovery(createEvaluation({ dryRun: true }), createEnv(), ui)
+    await finalizeDiscovery(createEvaluation({ dryRun: true }), createSettings(), createEnv(), ui)
 
     expect(updateModelsJson).not.toHaveBeenCalled()
     expect(ui.confirmations).toEqual([])
@@ -354,7 +340,7 @@ describe('finalizeDiscovery', () => {
     const ui = createUi()
     const refresh = createRefresh()
 
-    await finalizeDiscovery(createEvaluation({ passing: [] }), createEnv(), ui, refresh)
+    await finalizeDiscovery(createEvaluation({ passing: [] }), createSettings(), createEnv(), ui, refresh)
 
     expect(ui.confirmations).toEqual([])
     expect(updateModelsJson).not.toHaveBeenCalled()
@@ -367,10 +353,15 @@ describe('finalizeDiscovery', () => {
     const refresh = createRefresh()
     const evaluation = createEvaluation()
 
-    await finalizeDiscovery(evaluation, createEnv(), ui, refresh)
+    await finalizeDiscovery(evaluation, createSettings(), createEnv(), ui, refresh)
 
     expect(ui.confirmations).toHaveLength(1)
-    expect(updateModelsJson).toHaveBeenCalledWith(evaluation.data, evaluation.passing, expect.any(Object))
+    expect(updateModelsJson).toHaveBeenCalledWith(
+      evaluation.data,
+      evaluation.passing,
+      expect.any(Object),
+      expect.any(Object),
+    )
     expect(refresh.calls).toBe(1)
     expect(ui.notifications.at(-1)).toEqual({
       message: 'Updated models.json. New models are available in /model.',
@@ -382,7 +373,7 @@ describe('finalizeDiscovery', () => {
     const { updateModelsJson } = configureMockedDependencies()
     const ui = createUi()
 
-    await finalizeDiscovery(createEvaluation(), createEnv(), ui)
+    await finalizeDiscovery(createEvaluation(), createSettings(), createEnv(), ui)
 
     expect(updateModelsJson).toHaveBeenCalled()
     expect(ui.notifications.at(-1)).toEqual({ message: 'Updated models.json.', level: 'info' })
@@ -393,7 +384,7 @@ describe('finalizeDiscovery', () => {
     const ui = createUi()
     const refresh = createRefresh(new Error('registry exploded'))
 
-    await finalizeDiscovery(createEvaluation(), createEnv(), ui, refresh)
+    await finalizeDiscovery(createEvaluation(), createSettings(), createEnv(), ui, refresh)
 
     expect(updateModelsJson).toHaveBeenCalled()
     expect(ui.notifications.at(-1)).toEqual({
@@ -408,7 +399,7 @@ describe('finalizeDiscovery', () => {
     const ui = createUi(false)
     const refresh = createRefresh()
 
-    await finalizeDiscovery(createEvaluation(), createEnv(), ui, refresh)
+    await finalizeDiscovery(createEvaluation(), createSettings(), createEnv(), ui, refresh)
 
     expect(updateModelsJson).not.toHaveBeenCalled()
     expect(refresh.calls).toBe(0)
@@ -423,8 +414,8 @@ describe('finalizeDiscovery', () => {
     const ui = createUi()
     const refresh = createRefresh()
 
-    await finalizeDiscovery(createEvaluation({ dryRun: true }), createEnv(), ui, refresh)
-    await finalizeDiscovery(createEvaluation({ passing: [] }), createEnv(), ui, refresh)
+    await finalizeDiscovery(createEvaluation({ dryRun: true }), createSettings(), createEnv(), ui, refresh)
+    await finalizeDiscovery(createEvaluation({ passing: [] }), createSettings(), createEnv(), ui, refresh)
 
     expect(updateModelsJson).not.toHaveBeenCalled()
     expect(refresh.calls).toBe(0)
@@ -433,7 +424,7 @@ describe('finalizeDiscovery', () => {
   it('still confirms when the model id diff is empty, asking to refresh', async () => {
     const ui = createUi()
 
-    await finalizeDiscovery(createEvaluation({ diff: { added: [], removed: [] } }), createEnv(), ui)
+    await finalizeDiscovery(createEvaluation({ diff: { added: [], removed: [] } }), createSettings(), createEnv(), ui)
 
     expect(ui.confirmations).toEqual([
       {
@@ -447,7 +438,7 @@ describe('finalizeDiscovery', () => {
     const ui = createUi()
     const evaluation = createEvaluation({ diff: { added: ['requesty/model-new'], removed: [] } })
 
-    await finalizeDiscovery(evaluation, createEnv(), ui)
+    await finalizeDiscovery(evaluation, createSettings(), createEnv(), ui)
 
     expect(ui.confirmations).toEqual([
       {
@@ -460,7 +451,7 @@ describe('finalizeDiscovery', () => {
   it('notifies info when no models failed', async () => {
     const ui = createUi()
 
-    await finalizeDiscovery(createEvaluation({ failedCount: 0, modelCount: 2 }), createEnv(), ui)
+    await finalizeDiscovery(createEvaluation({ failedCount: 0, modelCount: 2 }), createSettings(), createEnv(), ui)
 
     expect(ui.notifications[0]?.level).toBe('info')
   })
@@ -468,7 +459,7 @@ describe('finalizeDiscovery', () => {
   it('notifies warning on partial failures', async () => {
     const ui = createUi()
 
-    await finalizeDiscovery(createEvaluation({ failedCount: 1, modelCount: 2 }), createEnv(), ui)
+    await finalizeDiscovery(createEvaluation({ failedCount: 1, modelCount: 2 }), createSettings(), createEnv(), ui)
 
     expect(ui.notifications[0]?.level).toBe('warning')
   })
@@ -476,7 +467,12 @@ describe('finalizeDiscovery', () => {
   it('notifies error when all models failed', async () => {
     const ui = createUi()
 
-    await finalizeDiscovery(createEvaluation({ failedCount: 2, modelCount: 2, passing: [] }), createEnv(), ui)
+    await finalizeDiscovery(
+      createEvaluation({ failedCount: 2, modelCount: 2, passing: [] }),
+      createSettings(),
+      createEnv(),
+      ui,
+    )
 
     expect(ui.notifications[0]?.level).toBe('error')
   })
@@ -489,7 +485,7 @@ describe('finalizeDiscovery', () => {
       diff: { added: ['requesty/model-a'], removed: [] },
     })
 
-    await finalizeDiscovery(evaluation, createEnv(), ui)
+    await finalizeDiscovery(evaluation, createSettings(), createEnv(), ui)
 
     expect(ui.notifications[0]?.message).toEqual(
       [
@@ -507,8 +503,15 @@ function createEnv(overrides: Partial<Env> = {}): Env {
     models_json_path: MODELS_JSON_PATH,
     health_check_log_path: HEALTH_CHECK_LOG_PATH,
     settings_path: SETTINGS_PATH,
-    provider_id: DEFAULT_PROVIDER_ID,
-    health_check_mode: 'basic',
+    ...overrides,
+  }
+}
+
+function createSettings(overrides: Partial<DiscoverySettings> = {}): DiscoverySettings {
+  return {
+    providerId: DEFAULT_PROVIDER_ID,
+    healthCheckMode: 'basic',
+    bannedModels: [],
     ...overrides,
   }
 }
@@ -585,8 +588,8 @@ function configureMockedDependencies(scenario: MockScenario = {}) {
   if (scenario.getRequestyConfigError) {
     getRequestyConfig.mockThrow(scenario.getRequestyConfigError)
   } else {
-    getRequestyConfig.mockImplementation(async (getApiKey, env = createEnv()) => {
-      const apiKey = await getApiKey(env.provider_id)
+    getRequestyConfig.mockImplementation(async (getApiKey, settings) => {
+      const apiKey = await getApiKey(settings.providerId)
       return {
         data: modelsJson,
         provider: { ...provider, apiKey: apiKey ?? 'not-found' },
@@ -632,13 +635,6 @@ function configureMockedDependencies(scenario: MockScenario = {}) {
   formatHealthSummary.mockReturnValue('Health check summary.\n')
   const writeHealthCheckLog = vi.mocked(HealthCheckModule.writeHealthCheckLog)
 
-  const readDiscoverySettings = vi.mocked(SettingsModule.readDiscoverySettings)
-  if (scenario.settingsError) {
-    readDiscoverySettings.mockThrow(scenario.settingsError)
-  } else {
-    readDiscoverySettings.mockReturnValue({ bannedModels: scenario.bannedModels ?? [] })
-  }
-
   return {
     getRequestyConfig,
     updateModelsJson,
@@ -648,7 +644,6 @@ function configureMockedDependencies(scenario: MockScenario = {}) {
     checkModels,
     formatHealthSummary,
     writeHealthCheckLog,
-    readDiscoverySettings,
   }
 }
 

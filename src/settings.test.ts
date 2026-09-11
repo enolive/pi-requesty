@@ -1,27 +1,26 @@
 import fs from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { type Env, DEFAULT_PROVIDER_ID } from './env'
-import { readDiscoverySettings } from './settings'
+import { type Env } from './env'
+import { DEFAULT_PROVIDER_ID, readDiscoverySettings } from './settings'
+import { createTempDirectory, TempDirectory } from '../test/helpers/temp-agent.ts'
 
 describe('readDiscoverySettings', () => {
-  let tempDir: string
+  let tempDir: TempDirectory
   let env: Env
 
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-requesty-settings-'))
+    tempDir = await createTempDirectory()
     env = createEnv(tempDir)
   })
 
   afterEach(async () => {
-    await fs.rm(tempDir, { recursive: true, force: true })
+    await tempDir.clean()
   })
 
   it('returns default settings when the file does not exist', () => {
     const settings = readDiscoverySettings(env)
 
-    expect(settings).toEqual({ bannedModels: [] })
+    expect(settings).toEqual({ bannedModels: [], healthCheckMode: 'full', providerId: DEFAULT_PROVIDER_ID })
   })
 
   it('reads banned models from a json5 file with comments', async () => {
@@ -42,12 +41,28 @@ describe('readDiscoverySettings', () => {
     expect(settings.bannedModels).toEqual(['requesty/unstable-model', 'requesty/another-unstable'])
   })
 
+  it('defaults providerId to default when omitted', async () => {
+    await fs.writeFile(env.settings_path, '{ other: true }', 'utf8')
+
+    const settings = readDiscoverySettings(env)
+
+    expect(settings.providerId).toEqual(DEFAULT_PROVIDER_ID)
+  })
+
+  it('defaults healthCheckMode to default when omitted', async () => {
+    await fs.writeFile(env.settings_path, '{ other: true }', 'utf8')
+
+    const settings = readDiscoverySettings(env)
+
+    expect(settings.healthCheckMode).toEqual('full')
+  })
+
   it('defaults bannedModels to empty when omitted', async () => {
     await fs.writeFile(env.settings_path, '{ other: true }', 'utf8')
 
     const settings = readDiscoverySettings(env)
 
-    expect(settings).toEqual({ bannedModels: [] })
+    expect(settings.bannedModels).toEqual([])
   })
 
   it('rejects a file with invalid json5 syntax', async () => {
@@ -69,12 +84,10 @@ describe('readDiscoverySettings', () => {
   })
 })
 
-function createEnv(dir: string): Env {
+function createEnv(dir: TempDirectory): Env {
   return {
-    models_json_path: path.join(dir, 'models.json'),
-    health_check_log_path: path.join(dir, 'requesty-health-check.log'),
-    settings_path: path.join(dir, 'requesty-discovery-settings.json5'),
-    provider_id: DEFAULT_PROVIDER_ID,
-    health_check_mode: 'basic',
+    models_json_path: dir.modelsJsonPath,
+    health_check_log_path: dir.healthCheckLogPath,
+    settings_path: dir.settingsPath,
   }
 }

@@ -4,7 +4,6 @@ import { GetApiKey, getRequestyConfig } from './models-json'
 import { type ApiKeyInfo, fetchApiUsage } from './requesty-api'
 import { RequestyStatusLoader } from './ui/requesty-status-loader.ts'
 import {
-  complainOnBrokenEnv,
   type DiscoveryEvaluation,
   type DiscoveryUi,
   evaluateDiscovery,
@@ -16,6 +15,7 @@ import {
   runCatchingAsync,
   type Try,
 } from './discovery'
+import { DiscoverySettings, readDiscoverySettings } from './settings.ts'
 
 export { type Try }
 
@@ -28,64 +28,81 @@ let latestToken: object = {}
 // noinspection JSUnusedGlobalSymbols
 export default function (pi: ExtensionAPI) {
   const env = runCatching(() => getEnv())
+  if (!env.ok) {
+    console.error('env loading failed', env.error)
+    return
+  }
+  const settings = runCatching(() => readDiscoverySettings(env.value))
+  if (!settings.ok) {
+    console.error('settings loading failed', settings.error)
+    return
+  }
 
   pi.registerCommand(COMMAND_NAME, {
     description: 'Dynamically discover Requesty models, run health checks, and update the local models.json.',
     getArgumentCompletions,
     handler: async (args, ctx) => {
-      await runDiscoveryWorkflow(ctx, env, args)
+      await runDiscoveryWorkflow(ctx, settings.value, env.value, args)
     },
   })
 
   pi.on('turn_end', (_event, ctx) => {
-    void updateUsageStatus(ctx, env)
+    void updateUsageStatus(ctx, settings.value, env.value)
   })
 
   pi.on('session_start', (_event, ctx) => {
-    const ui = createTuiUi(ctx)
-    complainOnBrokenEnv(ui, env)
-    void updateUsageStatus(ctx, env)
+    void updateUsageStatus(ctx, settings.value, env.value)
   })
 
   pi.on('model_select', (_event, ctx) => {
-    void updateUsageStatus(ctx, env)
+    void updateUsageStatus(ctx, settings.value, env.value)
   })
 }
 
-export async function runDiscoveryWorkflow(ctx: ExtensionCommandContext, env: Try<Env>, args: string) {
+export async function runDiscoveryWorkflow(
+  ctx: ExtensionCommandContext,
+  settings: DiscoverySettings,
+  env: Env,
+  args: string,
+) {
   const ui = ctx.mode === 'tui' ? createTuiUi(ctx) : createConsoleUi()
-  complainOnBrokenEnv(ui, env)
-  if (!env.ok) {
-    return
-  }
-
   if (ctx.mode !== 'tui') {
-    return runSilentDiscoveryWorkflow(ctx, env.value, args, ui)
+    return runSilentDiscoveryWorkflow(ctx, settings, env, args, ui)
   } else {
-    return runInteractiveDiscoverWorkflow(ctx, env.value, args, ui)
+    return runInteractiveDiscoverWorkflow(ctx, settings, env, args, ui)
   }
 }
 
 async function runSilentDiscoveryWorkflow(
   ctx: ExtensionCommandContext,
+  settings: DiscoverySettings,
   env: Env,
   args: string,
   ui: DiscoveryUi,
 ): Promise<void> {
-  const evaluationResult = await runCatchingAsync(() => evaluateDiscovery(args, env, ui, createGetApiKey(ctx)))
+  const evaluationResult = await runCatchingAsync(() =>
+    evaluateDiscovery(args, settings, env, ui, createGetApiKey(ctx)),
+  )
   if (!evaluationResult.ok) {
     ui.notify(formatDiscoveryFailure(evaluationResult.error), 'error')
     return
   }
 
-  await finalizeDiscovery(evaluationResult.value, env, ui)
+  await finalizeDiscovery(evaluationResult.value, settings, env, ui)
 }
 
-async function runInteractiveDiscoverWorkflow(ctx: ExtensionCommandContext, env: Env, args: string, ui: DiscoveryUi) {
+async function runInteractiveDiscoverWorkflow(
+  ctx: ExtensionCommandContext,
+  settings: DiscoverySettings,
+  env: Env,
+  args: string,
+  ui: DiscoveryUi,
+) {
   const evaluationResult: Try<DiscoveryEvaluation> = await runWithStatusUi(
     ctx,
     'Discovering models...',
-    async statusUi => await runCatchingAsync(() => evaluateDiscovery(args, env, statusUi, createGetApiKey(ctx))),
+    async statusUi =>
+      await runCatchingAsync(() => evaluateDiscovery(args, settings, env, statusUi, createGetApiKey(ctx))),
   )
 
   if (!evaluationResult.ok) {
@@ -93,7 +110,7 @@ async function runInteractiveDiscoverWorkflow(ctx: ExtensionCommandContext, env:
     return
   }
 
-  await finalizeDiscovery(evaluationResult.value, env, ui, createRefreshRegistry(ctx))
+  await finalizeDiscovery(evaluationResult.value, settings, env, ui, createRefreshRegistry(ctx))
 }
 
 async function runWithStatusUi<T>(
@@ -111,18 +128,17 @@ async function runWithStatusUi<T>(
   })
 }
 
-async function updateUsageStatus(ctx: ExtensionContext, env: Try<Env>): Promise<void> {
-  if (!env.ok) return
+async function updateUsageStatus(ctx: ExtensionContext, settings: DiscoverySettings, env: Env): Promise<void> {
   if (!ctx.hasUI) return // no footer to write to (print/json mode): skip the wasted fetch
   const token: object = {}
   latestToken = token
-  const shouldClear = ctx.model?.provider !== env.value.provider_id
+  const shouldClear = ctx.model?.provider !== settings.providerId
   try {
     if (shouldClear) {
       ctx.ui.setStatus(USAGE_STATUS_KEY, undefined)
       return
     }
-    const info = await fetchUsageStatus(createGetApiKey(ctx), env.value)
+    const info = await fetchUsageStatus(createGetApiKey(ctx), settings, env)
     if (latestToken !== token) return
     ctx.ui.setStatus(USAGE_STATUS_KEY, formatUsageStatus(info))
   } catch {
@@ -142,12 +158,12 @@ export function formatUsageStatus(info: ApiKeyInfo): string {
 
 let lastFetched: { value: ApiKeyInfo; time: Date } | undefined
 
-async function fetchUsageStatus(getApiKey: GetApiKey, env: Env): Promise<ApiKeyInfo> {
+async function fetchUsageStatus(getApiKey: GetApiKey, settings: DiscoverySettings, env: Env): Promise<ApiKeyInfo> {
   const now = new Date()
   if (lastFetched?.time && now.getTime() - lastFetched.time.getTime() < 2000) {
     return lastFetched.value
   }
-  const { provider } = await getRequestyConfig(getApiKey, env)
+  const { provider } = await getRequestyConfig(getApiKey, settings, env)
   const value = await fetchApiUsage(provider)
   lastFetched = { value, time: new Date() }
   return value

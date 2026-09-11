@@ -13,7 +13,8 @@ import {
 } from './health-check'
 import { createTempDirectory, type TempDirectory } from '../test/helpers/temp-agent'
 import { server } from '../test/setup'
-import { Env, DEFAULT_PROVIDER_ID } from './env.ts'
+import { Env } from './env'
+import { DEFAULT_PROVIDER_ID, DiscoverySettings } from './settings'
 
 const PROVIDER: Provider = {
   baseUrl: 'https://router.requesty.ai/v1',
@@ -552,11 +553,10 @@ describe('health summary and log output', () => {
   let tempDirectory: TempDirectory
   const envPrototype: Env = {
     health_check_log_path: '',
-    health_check_mode: 'basic',
     models_json_path: '',
     settings_path: '',
-    provider_id: DEFAULT_PROVIDER_ID,
   }
+  const settings = createTestSettings()
 
   beforeEach(async () => {
     tempDirectory = await createTempDirectory()
@@ -608,7 +608,7 @@ describe('health summary and log output', () => {
     ]
     const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
 
-    writeHealthCheckLog(PROVIDER, partialFailureResults, { added: [], removed: [] }, env)
+    writeHealthCheckLog(PROVIDER, partialFailureResults, { added: [], removed: [] }, settings, env)
 
     const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
     expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
@@ -621,7 +621,7 @@ describe('health summary and log output', () => {
     ]
     const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
 
-    writeHealthCheckLog(PROVIDER, successfulResults, { added: [], removed: [] }, env)
+    writeHealthCheckLog(PROVIDER, successfulResults, { added: [], removed: [] }, settings, env)
 
     const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
     expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
@@ -635,6 +635,7 @@ describe('health summary and log output', () => {
       PROVIDER,
       results,
       { added: ['requesty/model-a', 'requesty/model-new'], removed: ['requesty/model-old'] },
+      settings,
       env,
     )
 
@@ -693,4 +694,12 @@ function sseRawResponse(body: string) {
 
 function sseResponse(chunks: unknown[]) {
   return sseRawResponse(sseBody(chunks))
+}
+
+function createTestSettings(): DiscoverySettings {
+  return {
+    providerId: DEFAULT_PROVIDER_ID,
+    healthCheckMode: 'full',
+    bannedModels: [],
+  }
 }

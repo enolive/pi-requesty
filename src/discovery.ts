@@ -11,7 +11,7 @@ import {
 } from './models-json'
 import { checkModels, formatHealthSummary, writeHealthCheckLog } from './health-check'
 import { discoverModels } from './requesty-api'
-import { readDiscoverySettings } from './settings'
+import { DiscoverySettings } from './settings'
 
 const DRY_RUN_ARG = '--dry-run'
 
@@ -52,6 +52,7 @@ export function formatDiscoveryFailure(error: unknown): string {
 
 export async function evaluateDiscovery(
   args: string,
+  settings: DiscoverySettings,
   env: Env,
   ui: DiscoveryUi,
   getApiKey: GetApiKey,
@@ -59,8 +60,7 @@ export async function evaluateDiscovery(
   ui.setStatus('Discovering Requesty models...')
   const dryRun = args.split(' ').includes(DRY_RUN_ARG)
 
-  const { data, provider, existingModelIds } = await getRequestyConfig(getApiKey, env)
-  const settings = readDiscoverySettings(env)
+  const { data, provider, existingModelIds } = await getRequestyConfig(getApiKey, settings, env)
   const bannedModels = new Set(settings.bannedModels)
   const allModels = await discoverModels(provider)
   const models = allModels.filter(model => !bannedModels.has(model.id))
@@ -72,10 +72,10 @@ export async function evaluateDiscovery(
   let logNote = ''
   let healthCheckSummary = ''
 
-  if (env.health_check_mode !== 'off') {
+  if (settings.healthCheckMode !== 'off') {
     if (models.length > 0) {
       ui.setStatus(`Checking models 0/${models.length}...`)
-      const healthResults = await checkModels(provider, models, env.health_check_mode === 'full', {
+      const healthResults = await checkModels(provider, models, settings.healthCheckMode === 'full', {
         onProgress: ({ completed, total }) => {
           ui.setStatus(`Checking models ${completed}/${total}...`)
         },
@@ -87,7 +87,7 @@ export async function evaluateDiscovery(
         return r.ok && model ? [model] : []
       })
       healthCheckSummary = formatHealthSummary(sortedResults)
-      writeHealthCheckLog(provider, sortedResults, diffModels(existingModelIds, passing), env)
+      writeHealthCheckLog(provider, sortedResults, diffModels(existingModelIds, passing), settings, env)
     }
     diff = diffModels(existingModelIds, passing)
     logNote = `Full health check log: ${env.health_check_log_path}\n`
@@ -110,6 +110,7 @@ export async function evaluateDiscovery(
 
 export async function finalizeDiscovery(
   evaluation: DiscoveryEvaluation,
+  settings: DiscoverySettings,
   env: Env,
   ui: DiscoveryUi,
   refresh?: RefreshModelsRegistry,
@@ -140,7 +141,7 @@ Left models.json unchanged.`,
   const { title, message } = buildConfirmPrompt(evaluation)
   const shouldUpdate = await ui.confirm(title, message)
   if (shouldUpdate) {
-    updateModelsJson(evaluation.data, evaluation.passing, env)
+    updateModelsJson(evaluation.data, evaluation.passing, settings, env)
     if (!refresh) {
       ui.notify('Updated models.json.', 'info')
       return
@@ -220,11 +221,5 @@ export async function runCatchingAsync<T>(fn: () => Promise<T>): Promise<Try<T>>
     return { ok: true, value: await fn() }
   } catch (error) {
     return { ok: false, error }
-  }
-}
-
-export function complainOnBrokenEnv(ui: DiscoveryUi, env: Try<Env>) {
-  if (!env.ok) {
-    ui.notify(`failed to load env: ${formatError(env.error)}`, 'error')
   }
 }

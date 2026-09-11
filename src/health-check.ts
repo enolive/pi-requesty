@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getEnv, type Env } from './env'
 import { formatModelsDiffSummary, type ModelsDiff } from './models-json'
+import { DiscoverySettings } from './settings.ts'
 
 const HEALTH_CHECK_CONCURRENCY = 10
 const HEALTH_CHECK_TIMEOUT_MS = 15_000
@@ -103,6 +104,7 @@ export function writeHealthCheckLog(
   provider: Provider,
   results: HealthCheckResult[],
   diff: ModelsDiff,
+  settings: DiscoverySettings,
   envConfig: Env = getEnv(),
 ): void {
   const passed = results.filter(r => r.ok)
@@ -110,7 +112,7 @@ export function writeHealthCheckLog(
   const lines = [
     `Requesty health check log`,
     `Timestamp: ${new Date().toISOString()}`,
-    `Provider: ${envConfig.provider_id}`,
+    `Provider: ${settings.providerId}`,
     `Base URL: ${provider.baseUrl}`,
     `Total: ${results.length}`,
     `Passed: ${passed.length}`,

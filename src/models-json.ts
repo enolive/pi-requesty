@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
 import { type Env, getEnv } from './env'
+import { DiscoverySettings } from './settings.ts'
 
 const DEFAULT_BASE_URL = 'https://router.requesty.ai/v1'
 const DEFAULT_NAME = 'Requesty'
@@ -46,17 +47,21 @@ export type ModelsDiff = {
   removed: string[]
 }
 
-export async function getRequestyConfig(getApiKey: GetApiKey, envConfig: Env = getEnv()): Promise<RequestyConfig> {
+export async function getRequestyConfig(
+  getApiKey: GetApiKey,
+  settings: DiscoverySettings,
+  envConfig: Env = getEnv(),
+): Promise<RequestyConfig> {
   const data = readModelsJson(envConfig)
-  const provider = data.providers[envConfig.provider_id]
+  const provider = data.providers[settings.providerId]
 
   if (!provider) {
-    throw new Error(`${envConfig.models_json_path} does not define providers.${envConfig.provider_id}`)
+    throw new Error(`${envConfig.models_json_path} does not define providers.${settings.providerId}`)
   }
 
-  const apiKey = await getApiKey(envConfig.provider_id)
+  const apiKey = await getApiKey(settings.providerId)
   if (!apiKey) {
-    throw new Error(`No API key found for provider ${envConfig.provider_id}`)
+    throw new Error(`No API key found for provider ${settings.providerId}`)
   }
   return {
     data,
@@ -88,10 +93,15 @@ export function formatModelsDiffSummary(diff: ModelsDiff): string {
   ].join('\n')
 }
 
-export function updateModelsJson(data: ModelsJson, models: ProviderModelConfig[], envConfig: Env = getEnv()): void {
-  const provider = data.providers[envConfig.provider_id]
+export function updateModelsJson(
+  data: ModelsJson,
+  models: ProviderModelConfig[],
+  settings: DiscoverySettings,
+  envConfig = getEnv(),
+): void {
+  const provider = data.providers[settings.providerId]
   const { name, baseUrl, api, apiKey, models: _existingModels, ...passthrough } = provider
-  data.providers[envConfig.provider_id] = {
+  data.providers[settings.providerId] = {
     name,
     baseUrl,
     api,
