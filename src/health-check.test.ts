@@ -24,7 +24,7 @@ const PROVIDER: Provider = {
 
 const completionsEndpoint = 'https://router.requesty.ai/v1/chat/completions'
 
-const CHAT_BODY = {
+const CHAT_BODY: Parameters<typeof postChatCompletion>[1] = {
   model: 'requesty/test-model',
   messages: [{ role: 'user', content: 'Say OK' }],
 }
@@ -58,7 +58,49 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       status: 'error',
-      error: 'HTTP 502 Bad Gateway: bad gateway',
+      error: 'HTTP 502: 502 bad gateway',
+    })
+  })
+
+  it('returns failure with the full JSON error body', async () => {
+    server.use(
+      http.post(completionsEndpoint, () => {
+        return HttpResponse.json(
+          {
+            error: {
+              message: 'Model not found',
+              type: 'invalid_request_error',
+              code: 'model_not_found',
+            },
+          },
+          { status: 404, statusText: 'Not Found' },
+        )
+      }),
+    )
+
+    const result = await postChatCompletion(PROVIDER, CHAT_BODY)
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: 'HTTP 404: {"message":"Model not found","type":"invalid_request_error","code":"model_not_found"}',
+    })
+  })
+
+  it('returns failure with the full JSON body when it has no error wrapper', async () => {
+    server.use(
+      http.post(completionsEndpoint, () => {
+        return HttpResponse.json(
+          { message: 'upstream blew up', provider: 'azure/gpt-4o' },
+          { status: 502, statusText: 'Bad Gateway' },
+        )
+      }),
+    )
+
+    const result = await postChatCompletion(PROVIDER, CHAT_BODY)
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: 'HTTP 502: {"message":"upstream blew up","provider":"azure/gpt-4o"}',
     })
   })
 
@@ -76,7 +118,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       status: 'error',
-      error: 'HTTP 502 Bad Gateway',
+      error: 'HTTP 502: 502 status code (no body)',
     })
   })
 
@@ -94,7 +136,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       status: 'warning',
-      error: 'HTTP 429 Too Many Requests: Rate limit exceeded. Please slow down and retry.',
+      error: 'HTTP 429: 429 Rate limit exceeded. Please slow down and retry.',
     })
   })
 
@@ -114,14 +156,14 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       status: 'error',
-      error: 'HTTP 502 Bad Gateway',
+      error: 'HTTP 502: 502 body stream errored',
     })
   })
 
   it('returns failure when successful response body is not valid SSE', async () => {
     server.use(
       http.post(completionsEndpoint, () => {
-        return sseRawResponse('not json')
+        return sseRawResponse('data: not json\n\n')
       }),
     )
 
@@ -129,7 +171,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       status: 'error',
-      error: 'Stream ended without content',
+      error: 'Error reading response: malformed server-sent event JSON.',
     })
   })
 
@@ -148,7 +190,7 @@ describe('postChatCompletion', () => {
     })
   })
 
-  it('returns failure for stream with malformed choices chunk', async () => {
+  it('returns failure on malformed choices field', async () => {
     server.use(
       http.post(completionsEndpoint, () => {
         return sseResponse([{ choices: 'not-an-array' }])
@@ -205,7 +247,7 @@ describe('postChatCompletion', () => {
     expect(requestBody).toMatchObject({ stream: true })
   })
 
-  it('sends Accept: text/event-stream header', async () => {
+  it('sends Accept: application/json header (openai sdk default)', async () => {
     let acceptHeader: string | null = null
     server.use(
       http.post(completionsEndpoint, ({ request }) => {
@@ -216,7 +258,7 @@ describe('postChatCompletion', () => {
 
     await postChatCompletion(PROVIDER, CHAT_BODY)
 
-    expect(acceptHeader).toBe('text/event-stream')
+    expect(acceptHeader).toBe('application/json')
   })
 
   it('returns ok after the first content chunk of a multi-chunk stream', async () => {
@@ -301,7 +343,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       status: 'error',
-      error: 'Stream ended without content',
+      error: 'upstream blew up',
     })
   })
 
@@ -401,7 +443,7 @@ describe('checkModels', () => {
     expect(results).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          error: "Reasoning/tool check failed: HTTP 418 I'm a Teapot: BAM",
+          error: 'Reasoning/tool check failed: HTTP 418: 418 BAM',
           modelId: 'requesty/reasoning-model',
           status: 'error',
         }),
