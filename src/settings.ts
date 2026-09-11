@@ -20,7 +20,7 @@ export const DiscoverySettingsSchema = z
 export type DiscoverySettings = z.infer<typeof DiscoverySettingsSchema>
 
 const SCHEMA_URL =
-  'https://raw.githubusercontent.com/enolive/pi-requesty/main/docs/requesty-discovery-settings.schema.json'
+  'https://raw.githubusercontent.com/enolive/pi-requesty-discover/main/docs/requesty-discovery-settings.schema.json'
 
 /**
  * Reads the discovery settings file (JSON5, so it supports comments).

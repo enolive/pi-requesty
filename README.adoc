@@ -95,7 +95,7 @@ Example:
 [source,json5]
 ----
 {
-  "$schema": "https://raw.githubusercontent.com/enolive/pi-requesty/main/docs/requesty-discovery-settings.schema.json",
+  "$schema": "https://raw.githubusercontent.com/enolive/pi-requesty-discover/main/docs/requesty-discovery-settings.schema.json",
 
   // override the default provider id
   providerId: "requesty-export",
