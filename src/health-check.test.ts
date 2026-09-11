@@ -45,7 +45,10 @@ describe('postChatCompletion', () => {
   it('returns failure for HTTP error', async () => {
     server.use(
       http.post(completionsEndpoint, () => {
-        return HttpResponse.json({ message: 'bad gateway' }, { status: 502, statusText: 'Bad Gateway' })
+        return HttpResponse.text('bad gateway', {
+          status: 502,
+          statusText: 'Bad Gateway',
+        })
       }),
     )
 
@@ -53,7 +56,49 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: '502 bad gateway',
+      error: 'HTTP 502: 502 bad gateway',
+    })
+  })
+
+  it('returns failure with the full JSON error body', async () => {
+    server.use(
+      http.post(completionsEndpoint, () => {
+        return HttpResponse.json(
+          {
+            error: {
+              message: 'Model not found',
+              type: 'invalid_request_error',
+              code: 'model_not_found',
+            },
+          },
+          { status: 404, statusText: 'Not Found' },
+        )
+      }),
+    )
+
+    const result = await postChatCompletion(PROVIDER, CHAT_BODY)
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'HTTP 404: {"message":"Model not found","type":"invalid_request_error","code":"model_not_found"}',
+    })
+  })
+
+  it('returns failure with the full JSON body when it has no error wrapper', async () => {
+    server.use(
+      http.post(completionsEndpoint, () => {
+        return HttpResponse.json(
+          { message: 'upstream blew up', provider: 'azure/gpt-4o' },
+          { status: 502, statusText: 'Bad Gateway' },
+        )
+      }),
+    )
+
+    const result = await postChatCompletion(PROVIDER, CHAT_BODY)
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'HTTP 502: {"message":"upstream blew up","provider":"azure/gpt-4o"}',
     })
   })
 
@@ -71,7 +116,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: '502 status code (no body)',
+      error: 'HTTP 502: 502 status code (no body)',
     })
   })
 
@@ -91,7 +136,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: '502 body stream errored',
+      error: 'HTTP 502: 502 body stream errored',
     })
   })
 
@@ -374,7 +419,7 @@ describe('checkModels', () => {
     expect(results).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          error: 'Reasoning/tool check failed: 418 BAM',
+          error: 'Reasoning/tool check failed: HTTP 418: 418 BAM',
           modelId: 'requesty/reasoning-model',
           ok: false,
         }),

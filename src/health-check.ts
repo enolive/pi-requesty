@@ -180,6 +180,12 @@ export async function postChatCompletion(
 }
 
 function formatRequestError(err: unknown) {
+  if (err instanceof OpenAI.APIError && err.status !== undefined) {
+    // for JSON bodies err.error holds the (unwrapped) parsed payload; for text bodies err.message
+    // already includes the status and the raw response text
+    const body = err.error ? `: ${JSON.stringify(err.error)}` : `: ${err.message}`
+    return `HTTP ${err.status}${body}`
+  }
   return err instanceof Error ? err.message : String(err)
 }
 
