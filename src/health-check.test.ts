@@ -3,17 +3,19 @@ import fs from 'node:fs/promises'
 import { delay, http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  type HealthCheckLogContext,
+  type HealthCheckProgress,
+  type HealthCheckResult,
+  type Provider,
   checkModels,
   formatHealthSummary,
-  HealthCheckProgress,
-  type HealthCheckResult,
   postChatCompletion,
-  type Provider,
   writeHealthCheckLog,
 } from './health-check'
 import { createTempDirectory, type TempDirectory } from '../test/helpers/temp-agent'
 import { server } from '../test/setup'
-import { Env, DEFAULT_PROVIDER_ID } from './env.ts'
+import type { Env } from './env'
+import { DEFAULT_PROVIDER_ID } from './settings'
 
 const PROVIDER: Provider = {
   baseUrl: 'https://router.requesty.ai/v1',
@@ -39,7 +41,7 @@ describe('postChatCompletion', () => {
 
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
-    expect(result.ok).toBe(true)
+    expect(result.status).toBe('ok')
   })
 
   it('returns failure for HTTP error', async () => {
@@ -55,7 +57,7 @@ describe('postChatCompletion', () => {
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'HTTP 502: 502 bad gateway',
     })
   })
@@ -115,8 +117,26 @@ describe('postChatCompletion', () => {
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'HTTP 502: 502 status code (no body)',
+    })
+  })
+
+  it('returns warning for rate-limited HTTP 429', async () => {
+    server.use(
+      http.post(completionsEndpoint, () => {
+        return HttpResponse.text('Rate limit exceeded. Please slow down and retry.', {
+          status: 429,
+          statusText: 'Too Many Requests',
+        })
+      }),
+    )
+
+    const result = await postChatCompletion(PROVIDER, CHAT_BODY)
+
+    expect(result).toMatchObject({
+      status: 'warning',
+      error: 'HTTP 429 Too Many Requests: Rate limit exceeded. Please slow down and retry.',
     })
   })
 
@@ -135,7 +155,7 @@ describe('postChatCompletion', () => {
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'HTTP 502: 502 body stream errored',
     })
   })
@@ -150,7 +170,7 @@ describe('postChatCompletion', () => {
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'Error reading response: malformed server-sent event JSON.',
     })
   })
@@ -165,7 +185,7 @@ describe('postChatCompletion', () => {
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'Stream ended without content',
     })
   })
@@ -179,7 +199,10 @@ describe('postChatCompletion', () => {
 
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
-    expect(result.ok).toBe(true)
+    expect(result).toMatchObject({
+      status: 'error',
+      error: 'Stream ended without content',
+    })
   })
 
   it('sends bearer token', async () => {
@@ -251,7 +274,7 @@ describe('postChatCompletion', () => {
 
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
-    expect(result.ok).toBe(true)
+    expect(result.status).toBe('ok')
   })
 
   it('returns ok without requiring a [DONE] marker', async () => {
@@ -263,7 +286,7 @@ describe('postChatCompletion', () => {
 
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
-    expect(result.ok).toBe(true)
+    expect(result.status).toBe('ok')
   })
 
   it('returns failure when stream ends with [DONE] and no content chunk', async () => {
@@ -276,7 +299,7 @@ describe('postChatCompletion', () => {
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'Stream ended without content',
     })
   })
@@ -291,7 +314,7 @@ describe('postChatCompletion', () => {
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'Stream ended without content',
     })
   })
@@ -305,7 +328,8 @@ describe('postChatCompletion', () => {
 
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
-    expect(result).toMatchObject({ ok: false, error: 'Connection error.' })
+    expect(result).toMatchObject({ status: 'error' })
+    expect(result.error).not.toMatch(/^Timed out/)
   })
 
   it('returns failure for stream emitting an error object without content', async () => {
@@ -318,7 +342,7 @@ describe('postChatCompletion', () => {
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'upstream blew up',
     })
   })
@@ -340,7 +364,7 @@ describe('postChatCompletion', () => {
     })
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'Timed out after 2 attempt(s); per-attempt timeout is 0.001s',
     })
     expect(requestCount).toBe(2)
@@ -363,7 +387,7 @@ describe('postChatCompletion', () => {
     })
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'Timed out after 2 attempt(s); per-attempt timeout is 0.001s',
     })
     expect(requestCount).toBe(2)
@@ -421,7 +445,7 @@ describe('checkModels', () => {
         expect.objectContaining({
           error: 'Reasoning/tool check failed: HTTP 418: 418 BAM',
           modelId: 'requesty/reasoning-model',
-          ok: false,
+          status: 'error',
         }),
       ]),
     )
@@ -458,7 +482,7 @@ describe('checkModels', () => {
     expect(requestBodies).toHaveLength(1)
     expect(results[0]).toMatchObject({
       modelId: 'requesty/failing-model',
-      ok: false,
+      status: 'error',
     })
   })
 
@@ -576,10 +600,10 @@ describe('checkModels', () => {
     expect(results).toHaveLength(4)
     expect(results).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ modelId: 'requesty/model-a', ok: true }),
-        expect.objectContaining({ modelId: 'requesty/model-b', ok: false }),
-        expect.objectContaining({ modelId: 'requesty/model-c', ok: true }),
-        expect.objectContaining({ modelId: 'requesty/model-d', ok: true }),
+        expect.objectContaining({ modelId: 'requesty/model-a', status: 'ok' }),
+        expect.objectContaining({ modelId: 'requesty/model-b', status: 'error' }),
+        expect.objectContaining({ modelId: 'requesty/model-c', status: 'ok' }),
+        expect.objectContaining({ modelId: 'requesty/model-d', status: 'ok' }),
       ]),
     )
   })
@@ -589,9 +613,12 @@ describe('health summary and log output', () => {
   let tempDirectory: TempDirectory
   const envPrototype: Env = {
     health_check_log_path: '',
-    health_check_mode: 'basic',
     models_json_path: '',
-    provider_id: DEFAULT_PROVIDER_ID,
+    settings_path: '',
+  }
+  const logContext: HealthCheckLogContext = {
+    providerId: DEFAULT_PROVIDER_ID,
+    bannedModels: [],
   }
 
   beforeEach(async () => {
@@ -604,26 +631,59 @@ describe('health summary and log output', () => {
 
   it('formats summaries', () => {
     const allPassedResults = [
-      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/model-b', ok: true }),
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
+      createHealthCheckResult({ modelId: 'requesty/model-b', status: 'ok' }),
     ]
     const partialFailureResults = [
-      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
       createHealthCheckResult({
         modelId: 'requesty/failing-model',
-        ok: false,
+        status: 'error',
         error: 'HTTP 500 Internal Server Error',
       }),
     ]
     const allFailedResults = [
-      createHealthCheckResult({ modelId: 'requesty/model-a', ok: false, error: 'first failure' }),
-      createHealthCheckResult({ modelId: 'requesty/model-b', ok: false, error: 'second failure' }),
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'error', error: 'first failure' }),
+      createHealthCheckResult({ modelId: 'requesty/model-b', status: 'error', error: 'second failure' }),
+    ]
+    const withWarningsResults = [
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
+      createHealthCheckResult({ modelId: 'requesty/model-b', status: 'ok' }),
+      createHealthCheckResult({
+        modelId: 'requesty/rate-limited-model',
+        status: 'warning',
+        error: 'HTTP 429 Too Many Requests',
+      }),
+    ]
+    const onlyWarningsResults = [
+      createHealthCheckResult({
+        modelId: 'requesty/rate-limited-model-a',
+        status: 'warning',
+        error: 'HTTP 429 Too Many Requests',
+      }),
+      createHealthCheckResult({
+        modelId: 'requesty/rate-limited-model-b',
+        status: 'warning',
+        error: 'HTTP 429 Too Many Requests',
+      }),
+    ]
+    const mixedResults = [
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
+      createHealthCheckResult({ modelId: 'requesty/model-b', status: 'error', error: 'HTTP 404 Model not found' }),
+      createHealthCheckResult({
+        modelId: 'requesty/rate-limited-model',
+        status: 'warning',
+        error: 'HTTP 429 Too Many Requests',
+      }),
     ]
 
     const summaries = {
       allPassed: formatHealthSummary(allPassedResults),
       partialFailure: formatHealthSummary(partialFailureResults),
       allFailed: formatHealthSummary(allFailedResults),
+      withWarnings: formatHealthSummary(withWarningsResults),
+      onlyWarnings: formatHealthSummary(onlyWarningsResults),
+      mixed: formatHealthSummary(mixedResults),
     }
 
     expect(summaries).toMatchSnapshot()
@@ -631,20 +691,20 @@ describe('health summary and log output', () => {
 
   it('writes log file', async () => {
     const partialFailureResults = [
-      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
       createHealthCheckResult({
         modelId: 'requesty/failing-model',
-        ok: false,
+        status: 'error',
         error: 'HTTP 500 Internal Server Error',
       }),
       createHealthCheckResult({
         modelId: 'requesty/failing-model-unknown-error',
-        ok: false,
+        status: 'error',
       }),
     ]
     const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
 
-    writeHealthCheckLog(PROVIDER, partialFailureResults, { added: [], removed: [] }, env)
+    writeHealthCheckLog(PROVIDER, partialFailureResults, { added: [], removed: [] }, logContext, env)
 
     const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
     expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
@@ -652,25 +712,83 @@ describe('health summary and log output', () => {
 
   it('writes log file without any errors', async () => {
     const successfulResults = [
-      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/model-b', ok: true }),
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
+      createHealthCheckResult({ modelId: 'requesty/model-b', status: 'ok' }),
     ]
     const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
 
-    writeHealthCheckLog(PROVIDER, successfulResults, { added: [], removed: [] }, env)
+    writeHealthCheckLog(PROVIDER, successfulResults, { added: [], removed: [] }, logContext, env)
+
+    const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
+    expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
+  })
+
+  it('writes banned models into the log', async () => {
+    const results = [createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' })]
+    const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
+    const contextWithBans: HealthCheckLogContext = {
+      ...logContext,
+      bannedModels: ['requesty/unstable-model', 'requesty/another-unstable'],
+    }
+
+    writeHealthCheckLog(PROVIDER, results, { added: [], removed: [] }, contextWithBans, env)
+
+    const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
+    expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
+  })
+
+  it('writes errors and warnings into the log', async () => {
+    const mixedResults = [
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
+      createHealthCheckResult({
+        modelId: 'requesty/rate-limited-model',
+        status: 'warning',
+        error: 'HTTP 429 Too Many Requests: Rate limit exceeded. Please slow down and retry.',
+      }),
+      createHealthCheckResult({
+        modelId: 'requesty/failing-model',
+        status: 'error',
+        error: 'HTTP 500 Internal Server Error',
+      }),
+    ]
+    const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
+
+    writeHealthCheckLog(PROVIDER, mixedResults, { added: [], removed: [] }, logContext, env)
+
+    const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
+    expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
+  })
+
+  it('writes only warnings into the log', async () => {
+    const mixedResults = [
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
+      createHealthCheckResult({
+        modelId: 'requesty/rate-limited-model',
+        status: 'warning',
+        error: 'HTTP 429 Too Many Requests: Rate limit exceeded. Please slow down and retry.',
+      }),
+      createHealthCheckResult({
+        modelId: 'requesty/unknown-warning-model',
+        status: 'warning',
+      }),
+    ]
+    const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
+
+    writeHealthCheckLog(PROVIDER, mixedResults, { added: [], removed: [] }, logContext, env)
 
     const log = await fs.readFile(tempDirectory.healthCheckLogPath, 'utf8')
     expect(normalizeHealthCheckLog(log)).toMatchSnapshot()
   })
 
   it('writes added and removed models into the log', async () => {
-    const results = [createHealthCheckResult({ modelId: 'requesty/model-a', ok: true })]
+    const results = [createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' })]
     const env: Env = { ...envPrototype, health_check_log_path: tempDirectory.healthCheckLogPath }
 
     writeHealthCheckLog(
       PROVIDER,
       results,
       { added: ['requesty/model-a', 'requesty/model-new'], removed: ['requesty/model-old'] },
+      logContext,
       env,
     )
 
@@ -682,7 +800,7 @@ describe('health summary and log output', () => {
 function createHealthCheckResult(overrides: Partial<HealthCheckResult> = {}): HealthCheckResult {
   return {
     modelId: 'requesty/model',
-    ok: true,
+    status: 'ok',
     latencyMs: 123,
     ...overrides,
   }

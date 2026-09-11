@@ -1,16 +1,18 @@
-import { ProviderModelConfig } from '@earendil-works/pi-coding-agent'
+import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 import { type Env } from './env'
 import {
+  type GetApiKey,
+  type ModelsDiff,
+  type ModelsJson,
   diffModels,
   formatModelsDiffSummary,
-  GetApiKey,
   getRequestyConfig,
-  type ModelsDiff,
-  ModelsJson,
   updateModelsJson,
 } from './models-json'
 import { checkModels, formatHealthSummary, writeHealthCheckLog } from './health-check'
 import { discoverModels } from './requesty-api'
+import type { DiscoverySettings } from './settings'
+import { formatErrorMessage, runCatchingAsync } from './utils'
 
 const DRY_RUN_ARG = '--dry-run'
 
@@ -35,6 +37,7 @@ export type DiscoveryEvaluation = {
   dryRun: boolean
   modelCount: number
   failedCount: number
+  warningCount: number
   passing: ProviderModelConfig[]
   diff: ModelsDiff
   healthCheckSummary: string
@@ -42,15 +45,14 @@ export type DiscoveryEvaluation = {
   data: ModelsJson
 }
 
-export type Try<T> = { ok: true; value: T } | { ok: false; error: unknown }
-
 export function formatDiscoveryFailure(error: unknown): string {
-  const detail = formatError(error)
+  const detail = formatErrorMessage(error)
   return `Discovery failed: ${detail}`
 }
 
 export async function evaluateDiscovery(
   args: string,
+  settings: DiscoverySettings,
   env: Env,
   ui: DiscoveryUi,
   getApiKey: GetApiKey,
@@ -58,32 +60,52 @@ export async function evaluateDiscovery(
   ui.setStatus('Discovering Requesty models...')
   const dryRun = args.split(' ').includes(DRY_RUN_ARG)
 
-  const { data, provider, existingModelIds } = await getRequestyConfig(getApiKey, env)
-  const models = await discoverModels(provider)
+  const { data, provider, existingModelIds } = await getRequestyConfig(getApiKey, settings, env)
+  const bannedModels = new Set(settings.bannedModels)
+  const allModels = await discoverModels(provider)
+  const foundBannedModels = allModels
+    .filter(model => bannedModels.has(model.id))
+    .map(model => model.id)
+    .toSorted()
+  const models = allModels.filter(model => !bannedModels.has(model.id))
   const modelsMap = new Map(models.map(m => [m.id, m]))
 
   let diff: ModelsDiff
   let failedCount = 0
-  let passing: ProviderModelConfig[]
+  let warningCount = 0
+  let passing: ProviderModelConfig[] = []
   let logNote = ''
   let healthCheckSummary = ''
 
-  if (env.health_check_mode !== 'off') {
-    ui.setStatus(`Checking models 0/${models.length}...`)
-    const healthResults = await checkModels(provider, models, env.health_check_mode === 'full', {
-      onProgress: ({ completed, total }) => {
-        ui.setStatus(`Checking models ${completed}/${total}...`)
-      },
-    })
-    const sortedResults = healthResults.toSorted((a, b) => a.modelId.localeCompare(b.modelId))
-    failedCount = sortedResults.filter(r => !r.ok).length
-    passing = sortedResults.flatMap(r => {
-      const model = modelsMap.get(r.modelId)
-      return r.ok && model ? [model] : []
-    })
+  if (settings.healthCheckMode !== 'off') {
+    if (models.length > 0) {
+      ui.setStatus(`Checking models 0/${models.length}...`)
+      const healthResults = await checkModels(provider, models, settings.healthCheckMode === 'full', {
+        onProgress: ({ completed, total }) => {
+          ui.setStatus(`Checking models ${completed}/${total}...`)
+        },
+      })
+      const sortedResults = healthResults.toSorted((a, b) => a.modelId.localeCompare(b.modelId))
+      failedCount = sortedResults.filter(r => r.status === 'error').length
+      warningCount = sortedResults.filter(r => r.status === 'warning').length
+      passing = sortedResults.flatMap(r => {
+        const model = modelsMap.get(r.modelId)
+        if (!model) return []
+        if (r.status === 'ok') return [model]
+        // warnings are transient: assume that the error will go away and add them anyway
+        if (r.status === 'warning') return [model]
+        return []
+      })
+      healthCheckSummary = formatHealthSummary(sortedResults)
+      writeHealthCheckLog(
+        provider,
+        sortedResults,
+        diffModels(existingModelIds, passing),
+        { providerId: settings.providerId, bannedModels: foundBannedModels },
+        env,
+      )
+    }
     diff = diffModels(existingModelIds, passing)
-    healthCheckSummary = formatHealthSummary(sortedResults)
-    writeHealthCheckLog(provider, sortedResults, diff, env)
     logNote = `Full health check log: ${env.health_check_log_path}\n`
   } else {
     passing = models
@@ -94,6 +116,7 @@ export async function evaluateDiscovery(
     dryRun,
     modelCount: models.length,
     failedCount,
+    warningCount,
     passing,
     diff,
     healthCheckSummary,
@@ -104,6 +127,7 @@ export async function evaluateDiscovery(
 
 export async function finalizeDiscovery(
   evaluation: DiscoveryEvaluation,
+  settings: DiscoverySettings,
   env: Env,
   ui: DiscoveryUi,
   refresh?: RefreshModelsRegistry,
@@ -134,7 +158,7 @@ Left models.json unchanged.`,
   const { title, message } = buildConfirmPrompt(evaluation)
   const shouldUpdate = await ui.confirm(title, message)
   if (shouldUpdate) {
-    updateModelsJson(evaluation.data, evaluation.passing, env)
+    updateModelsJson(evaluation.data, evaluation.passing, settings, env)
     if (!refresh) {
       ui.notify('Updated models.json.', 'info')
       return
@@ -144,7 +168,7 @@ Left models.json unchanged.`,
       ui.notify('Updated models.json. New models are available in /model.', 'info')
     } else {
       ui.notify(
-        `Updated models.json, but the model registry could not be refreshed: ${formatError(refreshResult.error)}. Run /reload or restart Pi to use the changes.`,
+        `Updated models.json, but the model registry could not be refreshed: ${formatErrorMessage(refreshResult.error)}. Run /reload or restart Pi to use the changes.`,
         'warning',
       )
     }
@@ -180,9 +204,9 @@ function buildConfirmPrompt(evaluation: DiscoveryEvaluation): { title: string; m
 }
 
 function notificationLevel(evaluation: DiscoveryEvaluation): NotificationLevel {
-  if (evaluation.failedCount === 0) return 'info'
-  if (evaluation.failedCount < evaluation.modelCount) return 'warning'
-  return 'error'
+  if (evaluation.failedCount > 0) return 'error'
+  if (evaluation.warningCount > 0) return 'warning'
+  return 'info'
 }
 
 export function getArgumentCompletions(prefix: string): AutocompleteItem[] {
@@ -195,30 +219,4 @@ export function getArgumentCompletions(prefix: string): AutocompleteItem[] {
   ]
   if (!prefix) return options
   return options.filter(o => o.value.toLowerCase().startsWith(prefix.toLowerCase()))
-}
-
-export function formatError(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
-}
-
-export function runCatching<T>(fn: () => T): Try<T> {
-  try {
-    return { ok: true, value: fn() }
-  } catch (error) {
-    return { ok: false, error }
-  }
-}
-
-export async function runCatchingAsync<T>(fn: () => Promise<T>): Promise<Try<T>> {
-  try {
-    return { ok: true, value: await fn() }
-  } catch (error) {
-    return { ok: false, error }
-  }
-}
-
-export function complainOnBrokenEnv(ui: DiscoveryUi, env: Try<Env>) {
-  if (!env.ok) {
-    ui.notify(`failed to load env: ${formatError(env.error)}`, 'error')
-  }
 }

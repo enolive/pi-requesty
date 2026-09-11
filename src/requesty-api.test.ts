@@ -1,6 +1,6 @@
 import { delay, http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { discoverModels, fetchApiUsage, RequestyModel } from './requesty-api'
+import { discoverModels, fetchApiUsage, type RequestyModel } from './requesty-api'
 import { server } from '../test/setup'
 import { ZodError } from 'zod'
 

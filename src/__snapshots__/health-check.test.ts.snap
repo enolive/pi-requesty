@@ -70,14 +70,12 @@ exports[`checkModels > calls basic completion check once per model 1`] = `
 
 exports[`health summary and log output > formats summaries 1`] = `
 {
-  "allFailed": "Health check: 0 OK, 2 failed:
-- requesty/model-a
-- requesty/model-b
-",
-  "allPassed": "Health check: all 2 OK.",
-  "partialFailure": "Health check: 1 OK, 1 failed:
-- requesty/failing-model
-",
+  "allFailed": "Health check: 0 OK, 2 failed.",
+  "allPassed": "Health check: 2 OK.",
+  "mixed": "Health check: 1 OK, 1 warning, 1 failed.",
+  "onlyWarnings": "Health check: 0 OK, 2 warnings.",
+  "partialFailure": "Health check: 1 OK, 1 failed.",
+  "withWarnings": "Health check: 2 OK, 1 warning.",
 }
 `;
 
@@ -88,7 +86,9 @@ Provider: requesty-export
 Base URL: https://router.requesty.ai/v1
 Total: 1
 Passed: 1
+Warnings: 0
 Failed: 0
+Banned: 0
 
 Added models:
 - requesty/model-a
@@ -100,6 +100,61 @@ No failed models.
 "
 `;
 
+exports[`health summary and log output > writes banned models into the log 1`] = `
+"Requesty health check log
+Timestamp: <timestamp>
+Provider: requesty-export
+Base URL: https://router.requesty.ai/v1
+Total: 1
+Passed: 1
+Warnings: 0
+Failed: 0
+Banned: 2
+- requesty/unstable-model
+- requesty/another-unstable
+
+No added models.
+No removed models.
+
+No failed models.
+"
+`;
+
+exports[`health summary and log output > writes errors and warnings into the log 1`] = `
+"Requesty health check log
+Timestamp: <timestamp>
+Provider: requesty-export
+Base URL: https://router.requesty.ai/v1
+Total: 3
+Passed: 1
+Warnings: 1
+Failed: 1
+Banned: 0
+
+No added models.
+No removed models.
+
+Models with warnings:
+
+Model: requesty/rate-limited-model
+Latency: 123ms
+Error:
+HTTP 429 Too Many Requests: Rate limit exceeded. Please slow down and retry.
+
+---
+
+Failed models:
+
+Model: requesty/failing-model
+Latency: 123ms
+Error:
+HTTP 500 Internal Server Error
+
+---
+
+"
+`;
+
 exports[`health summary and log output > writes log file 1`] = `
 "Requesty health check log
 Timestamp: <timestamp>
@@ -107,7 +162,9 @@ Provider: requesty-export
 Base URL: https://router.requesty.ai/v1
 Total: 3
 Passed: 1
+Warnings: 0
 Failed: 2
+Banned: 0
 
 No added models.
 No removed models.
@@ -138,11 +195,46 @@ Provider: requesty-export
 Base URL: https://router.requesty.ai/v1
 Total: 2
 Passed: 2
+Warnings: 0
 Failed: 0
+Banned: 0
 
 No added models.
 No removed models.
 
 No failed models.
+"
+`;
+
+exports[`health summary and log output > writes only warnings into the log 1`] = `
+"Requesty health check log
+Timestamp: <timestamp>
+Provider: requesty-export
+Base URL: https://router.requesty.ai/v1
+Total: 3
+Passed: 1
+Warnings: 2
+Failed: 0
+Banned: 0
+
+No added models.
+No removed models.
+
+Models with warnings:
+
+Model: requesty/rate-limited-model
+Latency: 123ms
+Error:
+HTTP 429 Too Many Requests: Rate limit exceeded. Please slow down and retry.
+
+---
+
+Model: requesty/unknown-warning-model
+Latency: 123ms
+Error:
+Unknown error
+
+---
+
 "
 `;

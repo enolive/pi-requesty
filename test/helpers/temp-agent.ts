@@ -7,6 +7,7 @@ export interface TempDirectory {
   agentDir: string
   modelsJsonPath: string
   healthCheckLogPath: string
+  settingsPath: string
 
   clean(): Promise<void>
 }
@@ -16,6 +17,7 @@ export async function createTempDirectory(): Promise<TempDirectory> {
   const agentDir = path.join(homeDir, '.pi', 'agent')
   const modelsJsonPath = path.join(agentDir, 'models.json')
   const healthCheckLogPath = path.join(agentDir, 'requesty-health-check.log')
+  const settingsPath = path.join(agentDir, 'requesty-discovery-settings.json5')
 
   await fs.mkdir(agentDir, { recursive: true })
 
@@ -24,6 +26,7 @@ export async function createTempDirectory(): Promise<TempDirectory> {
     agentDir,
     modelsJsonPath,
     healthCheckLogPath,
+    settingsPath,
     async clean() {
       await fs.rm(homeDir, { recursive: true, force: true })
     },

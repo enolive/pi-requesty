@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import OpenAI from 'openai'
 import type { Stream } from 'openai/streaming'
-import { getEnv, type Env } from './env'
+import { type Env, getEnv } from './env'
 import { formatModelsDiffSummary, type ModelsDiff } from './models-json'
 
 const HEALTH_CHECK_CONCURRENCY = 10
@@ -23,9 +23,11 @@ export type Provider = {
   apiKey: string
 }
 
+export type HealthCheckStatus = 'ok' | 'warning' | 'error'
+
 export type HealthCheckResult = {
   modelId: string
-  ok: boolean
+  status: HealthCheckStatus
   latencyMs: number
   error?: string
 }
@@ -36,6 +38,11 @@ export type HealthCheckProgress = {
   completed: number
   total: number
   modelId: string
+}
+
+export type HealthCheckLogContext = {
+  providerId: string
+  bannedModels: string[]
 }
 
 export type HealthCheckOptions = {
@@ -87,53 +94,73 @@ export async function checkModels(
 }
 
 export function formatHealthSummary(results: HealthCheckResult[]): string {
-  const passed = results.filter(r => r.ok)
-  const failed = results.filter(r => !r.ok)
+  const passed = results.filter(r => r.status === 'ok')
+  const warned = results.filter(r => r.status === 'warning')
+  const failed = results.filter(r => r.status === 'error')
 
-  if (failed.length === 0) {
-    return `Health check: all ${passed.length} OK.`
-  }
+  const parts = [`${passed.length} OK`]
+  if (warned.length > 0) parts.push(`${warned.length} warning${warned.length === 1 ? '' : 's'}`)
+  if (failed.length > 0) parts.push(`${failed.length} failed`)
 
-  const failedModels = failed.map(r => `- ${r.modelId}`).join('\n')
-
-  return `Health check: ${passed.length} OK, ${failed.length} failed:\n${failedModels}\n`
+  return `Health check: ${parts.join(', ')}.`
 }
 
 export function writeHealthCheckLog(
   provider: Provider,
   results: HealthCheckResult[],
   diff: ModelsDiff,
+  context: HealthCheckLogContext,
   envConfig: Env = getEnv(),
 ): void {
-  const passed = results.filter(r => r.ok)
-  const failed = results.filter(r => !r.ok)
+  const passed = results.filter(r => r.status === 'ok')
+  const warned = results.filter(r => r.status === 'warning')
+  const failed = results.filter(r => r.status === 'error')
   const lines = [
     `Requesty health check log`,
     `Timestamp: ${new Date().toISOString()}`,
-    `Provider: ${envConfig.provider_id}`,
+    `Provider: ${context.providerId}`,
     `Base URL: ${provider.baseUrl}`,
     `Total: ${results.length}`,
     `Passed: ${passed.length}`,
+    `Warnings: ${warned.length}`,
     `Failed: ${failed.length}`,
+    `Banned: ${context.bannedModels.length}`,
+    ...context.bannedModels.map(id => `- ${id}`),
     '',
     formatModelsDiffSummary(diff),
     '',
   ]
 
-  if (failed.length === 0) {
+  if (warned.length === 0 && failed.length === 0) {
     lines.push('No failed models.')
   } else {
-    lines.push('Failed models:', '')
-    for (const result of failed) {
-      lines.push(
-        `Model: ${result.modelId}`,
-        `Latency: ${result.latencyMs}ms`,
-        'Error:',
-        result.error || 'Unknown error',
-        '',
-        '---',
-        '',
-      )
+    if (warned.length > 0) {
+      lines.push('Models with warnings:', '')
+      for (const result of warned) {
+        lines.push(
+          `Model: ${result.modelId}`,
+          `Latency: ${result.latencyMs}ms`,
+          'Error:',
+          result.error || 'Unknown error',
+          '',
+          '---',
+          '',
+        )
+      }
+    }
+    if (failed.length > 0) {
+      lines.push('Failed models:', '')
+      for (const result of failed) {
+        lines.push(
+          `Model: ${result.modelId}`,
+          `Latency: ${result.latencyMs}ms`,
+          'Error:',
+          result.error || 'Unknown error',
+          '',
+          '---',
+          '',
+        )
+      }
     }
   }
 
@@ -165,8 +192,9 @@ export async function postChatCompletion(
         continue
       }
       const attempts = attempt + 1
+      const status: HealthCheckStatus = response.status === 429 ? 'warning' : 'error'
       return {
-        ok: false,
+        status,
         latencyMs: Date.now() - start,
         error:
           err instanceof OpenAI.APIConnectionTimeoutError
@@ -176,7 +204,7 @@ export async function postChatCompletion(
     }
   }
 
-  return { ok: false, latencyMs: Date.now() - start, error: 'Unknown error' }
+  return { status: 'error', latencyMs: Date.now() - start, error: 'Unknown error' }
 }
 
 function formatRequestError(err: unknown) {
@@ -206,10 +234,10 @@ async function verifyFirstStreamChunk(
     if (chunk.choices?.length) {
       // abort before breaking so the request is terminated immediately
       stream.controller.abort()
-      return { ok: true, latencyMs: Date.now() - start }
+      return { status: 'ok', latencyMs: Date.now() - start }
     }
   }
-  return { ok: false, latencyMs: Date.now() - start, error: 'Stream ended without content' }
+  return { status: 'error', latencyMs: Date.now() - start, error: 'Stream ended without content' }
 }
 
 async function checkModel(
@@ -228,7 +256,7 @@ async function checkModel(
     options,
   )
 
-  if (!basicResult.ok || !model.reasoning || !checkReasoning) {
+  if (basicResult.status !== 'ok' || !model.reasoning || !checkReasoning) {
     return basicResult
   }
 
@@ -256,16 +284,16 @@ async function checkModel(
     options,
   )
 
-  if (!reasoningResult.ok) {
+  if (reasoningResult.status !== 'ok') {
     return {
-      ok: false,
+      status: 'error',
       latencyMs: reasoningResult.latencyMs,
       error: `Reasoning/tool check failed: ${reasoningResult.error}`,
     }
   }
 
   return {
-    ok: true,
+    status: 'ok',
     latencyMs: basicResult.latencyMs + reasoningResult.latencyMs,
   }
 }
