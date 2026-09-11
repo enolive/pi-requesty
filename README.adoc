@@ -61,7 +61,7 @@ pi -e ./pi-requesty-discover
 == Configuration
 
 The extension reads the `requesty-export` provider from `~/.pi/agent/models.json`.
-You can override the provider via the settings.
+You can override the provider id via the settings.
 
 Example:
 
