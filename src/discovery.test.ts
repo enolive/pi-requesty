@@ -30,6 +30,7 @@ type MockScenario = {
   getRequestyConfigError?: unknown
   discoverModelsError?: unknown
   diff?: ModelsDiff
+  existingModelIds?: string[]
 }
 
 const MODELS_JSON_PATH = '/tmp/pi-requesty-home/.pi/agent/models.json'
@@ -107,8 +108,8 @@ describe('evaluateDiscovery', () => {
   it('marks passing models on full success', async () => {
     const models = [createModel({ id: 'requesty/model-a' }), createModel({ id: 'requesty/model-b' })]
     const healthResults = [
-      createHealthCheckResult({ modelId: 'requesty/model-a', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/model-b', ok: true }),
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
+      createHealthCheckResult({ modelId: 'requesty/model-b', status: 'ok' }),
     ]
     configureMockedDependencies({ models, healthResults })
     const ui = createUi()
@@ -120,12 +121,61 @@ describe('evaluateDiscovery', () => {
     expect(evaluation.modelCount).toBe(2)
   })
 
+  it('keeps existing rate-limited models instead of removing them', async () => {
+    const modelA = createModel({ id: 'requesty/model-a' })
+    const rateLimitedModel = createModel({ id: 'requesty/rate-limited-model' })
+    const healthResults = [
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
+      createHealthCheckResult({
+        modelId: 'requesty/rate-limited-model',
+        status: 'warning',
+        error: 'HTTP 429 Too Many Requests',
+      }),
+    ]
+    configureMockedDependencies({
+      models: [modelA, rateLimitedModel],
+      healthResults,
+      existingModelIds: ['requesty/rate-limited-model'],
+    })
+    const ui = createUi()
+
+    const evaluation = await evaluateDiscovery('', createSettings(), createEnv(), ui, getApiKey)
+
+    expect(evaluation.passing).toEqual(expect.arrayContaining([modelA, rateLimitedModel]))
+    expect(evaluation.failedCount).toBe(0)
+    expect(evaluation.warningCount).toBe(1)
+  })
+
+  it('adds new rate-limited models', async () => {
+    const modelA = createModel({ id: 'requesty/model-a' })
+    const rateLimitedModel = createModel({ id: 'requesty/rate-limited-model' })
+    const healthResults = [
+      createHealthCheckResult({ modelId: 'requesty/model-a', status: 'ok' }),
+      createHealthCheckResult({
+        modelId: 'requesty/rate-limited-model',
+        status: 'warning',
+        error: 'HTTP 429 Too Many Requests',
+      }),
+    ]
+    configureMockedDependencies({
+      models: [modelA, rateLimitedModel],
+      healthResults,
+      existingModelIds: [],
+    })
+    const ui = createUi()
+
+    const evaluation = await evaluateDiscovery('', createSettings(), createEnv(), ui, getApiKey)
+
+    expect(evaluation.passing).toEqual([modelA, rateLimitedModel])
+    expect(evaluation.warningCount).toBe(1)
+  })
+
   it('keeps only passing models on partial failures', async () => {
     const passingModel = createModel({ id: 'requesty/passing-model' })
     const failingModel = createModel({ id: 'requesty/failing-model' })
     const healthResults = [
-      createHealthCheckResult({ modelId: 'requesty/passing-model', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/failing-model', ok: false }),
+      createHealthCheckResult({ modelId: 'requesty/passing-model', status: 'ok' }),
+      createHealthCheckResult({ modelId: 'requesty/failing-model', status: 'error' }),
     ]
     configureMockedDependencies({ models: [passingModel, failingModel], healthResults })
     const ui = createUi()
@@ -141,9 +191,9 @@ describe('evaluateDiscovery', () => {
     const failingModel2 = createModel({ id: 'requesty/failing-model-2' })
     const failingModel3 = createModel({ id: 'requesty/failing-model-3' })
     const shuffledHealthResults = [
-      createHealthCheckResult({ modelId: 'requesty/failing-model-1', ok: false }),
-      createHealthCheckResult({ modelId: 'requesty/failing-model-2', ok: false }),
-      createHealthCheckResult({ modelId: 'requesty/failing-model-3', ok: false }),
+      createHealthCheckResult({ modelId: 'requesty/failing-model-1', status: 'error' }),
+      createHealthCheckResult({ modelId: 'requesty/failing-model-2', status: 'error' }),
+      createHealthCheckResult({ modelId: 'requesty/failing-model-3', status: 'error' }),
     ].toSorted(shuffleCompareFn)
     const { formatHealthSummary, writeHealthCheckLog } = configureMockedDependencies({
       models: [failingModel1, failingModel2, failingModel3],
@@ -185,9 +235,9 @@ describe('evaluateDiscovery', () => {
     const passingModel2 = createModel({ id: 'requesty/passing-model-2' })
     const passingModel3 = createModel({ id: 'requesty/passing-model-3' })
     const shuffledHealthResults = [
-      createHealthCheckResult({ modelId: 'requesty/passing-model-1', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/passing-model-2', ok: true }),
-      createHealthCheckResult({ modelId: 'requesty/passing-model-3', ok: true }),
+      createHealthCheckResult({ modelId: 'requesty/passing-model-1', status: 'ok' }),
+      createHealthCheckResult({ modelId: 'requesty/passing-model-2', status: 'ok' }),
+      createHealthCheckResult({ modelId: 'requesty/passing-model-3', status: 'ok' }),
     ].toSorted(shuffleCompareFn)
     configureMockedDependencies({
       models: [passingModel1, passingModel2, passingModel3],
@@ -432,12 +482,25 @@ describe('finalizeDiscovery', () => {
     expect(ui.notifications[0]?.level).toBe('info')
   })
 
-  it('notifies warning on partial failures', async () => {
+  it('notifies warning when only warnings occurred', async () => {
+    const ui = createUi()
+
+    await finalizeDiscovery(
+      createEvaluation({ failedCount: 0, warningCount: 1, modelCount: 2 }),
+      createSettings(),
+      createEnv(),
+      ui,
+    )
+
+    expect(ui.notifications[0]?.level).toBe('warning')
+  })
+
+  it('notifies error on any real failure', async () => {
     const ui = createUi()
 
     await finalizeDiscovery(createEvaluation({ failedCount: 1, modelCount: 2 }), createSettings(), createEnv(), ui)
 
-    expect(ui.notifications[0]?.level).toBe('warning')
+    expect(ui.notifications[0]?.level).toBe('error')
   })
 
   it('notifies error when all models failed', async () => {
@@ -513,7 +576,7 @@ function createModel(overrides: Partial<ProviderModelConfig> = {}): ProviderMode
 function createHealthCheckResult(overrides: Partial<HealthCheckResult> = {}): HealthCheckResult {
   return {
     modelId: 'requesty/model',
-    ok: true,
+    status: 'ok',
     latencyMs: 123,
     ...overrides,
   }
@@ -569,7 +632,7 @@ function configureMockedDependencies(scenario: MockScenario = {}) {
       return {
         data: modelsJson,
         provider: { ...provider, apiKey: apiKey ?? 'not-found' },
-        existingModelIds: [],
+        existingModelIds: scenario.existingModelIds ?? [],
       }
     })
   }
@@ -628,6 +691,7 @@ function createEvaluation(overrides: Partial<DiscoveryEvaluation> = {}): Discove
     dryRun: false,
     modelCount: 1,
     failedCount: 0,
+    warningCount: 0,
     passing: [createModel({ id: 'requesty/model-a' })],
     diff: { added: [], removed: [] },
     healthCheckSummary: '',

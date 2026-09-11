@@ -11,7 +11,7 @@ import { DEFAULT_PROVIDER_ID, type DiscoverySettings } from './settings'
 import type { DiscoveryEvaluation } from './discovery'
 import * as DiscoveryModule from './discovery'
 import { createFakeCommandContext, createFakePi, fireEvent } from '../test/helpers/fake-pi'
-import { resetUsageStatusCache } from './index'
+import { resetUsageStatusCache, USAGE_STATUS_KEY } from './index'
 
 vi.mock('./discovery', async importOriginal => {
   const actual = await importOriginal<typeof import('./discovery')>()
@@ -165,6 +165,27 @@ describe('runDiscoveryWorkflow mode dispatch', () => {
       { title: 'finalize', message: 'confirm' },
     ])
     expect(capturedModelRefreshes).toEqual([{ allowNetwork: false }])
+  })
+
+  it('updates the usage status after the discovery', async () => {
+    const env = createTestEnv()
+    const settings = createTestSettings()
+    const evaluation = createEvaluation()
+    vi.mocked(DiscoveryModule.evaluateDiscovery).mockResolvedValue(evaluation)
+    vi.mocked(DiscoveryModule.finalizeDiscovery).mockResolvedValue(undefined)
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx, capturedStatusLines } = createFakeCommandContext({
+      confirmResult: true,
+      knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' },
+    })
+    const apiKeyInfo: ApiKeyInfo = { name: 'Playground', monthlySpend: 63.55, monthlyLimit: 150 }
+    const { fetchApiUsage } = mockUsageDependencies([Promise.resolve(apiKeyInfo)])
+
+    await runDiscoveryWorkflow(ctx, settings, env, '')
+
+    expect(fetchApiUsage).toHaveBeenCalled()
+
+    expect(capturedStatusLines).toEqual(expect.arrayContaining([expect.objectContaining({ key: USAGE_STATUS_KEY })]))
   })
 
   it('wires console ui and auto-confirm into discovery outside tui mode: no ctx.ui interaction, no registry refresh', async () => {
@@ -399,25 +420,6 @@ describe('usage status', () => {
     resetUsageStatusCache()
   })
 
-  function mockUsageDependencies(fetchApiUsageResults?: Promise<ApiKeyInfo>[]) {
-    const getRequestyConfig = vi.mocked(ModelsJsonModule.getRequestyConfig)
-    getRequestyConfig.mockResolvedValue({
-      data: { providers: {} },
-      provider,
-      existingModelIds: [],
-    })
-    const fetchApiUsage = vi.mocked(RequestyApiModule.fetchApiUsage)
-    fetchApiUsage.mockReset()
-    if (fetchApiUsageResults) {
-      for (const result of fetchApiUsageResults) {
-        fetchApiUsage.mockReturnValueOnce(result)
-      }
-    } else {
-      fetchApiUsage.mockResolvedValue({ name: 'Playground', monthlySpend: 0, monthlyLimit: 0 })
-    }
-    return { fetchApiUsage }
-  }
-
   describe('sets the usage status line', () => {
     it.each(events)('on %s', async eventName => {
       const apiKeyInfo: ApiKeyInfo = { name: 'Playground', monthlySpend: 63.55, monthlyLimit: 150 }
@@ -581,6 +583,25 @@ async function loadExtension() {
   }
 }
 
+function mockUsageDependencies(fetchApiUsageResults?: Promise<ApiKeyInfo>[]) {
+  const getRequestyConfig = vi.mocked(ModelsJsonModule.getRequestyConfig)
+  getRequestyConfig.mockResolvedValue({
+    data: { providers: {} },
+    provider,
+    existingModelIds: [],
+  })
+  const fetchApiUsage = vi.mocked(RequestyApiModule.fetchApiUsage)
+  fetchApiUsage.mockReset()
+  if (fetchApiUsageResults) {
+    for (const result of fetchApiUsageResults) {
+      fetchApiUsage.mockReturnValueOnce(result)
+    }
+  } else {
+    fetchApiUsage.mockResolvedValue({ name: 'Playground', monthlySpend: 0, monthlyLimit: 0 })
+  }
+  return { fetchApiUsage }
+}
+
 async function getArgumentCompletions(command: TestCommand, prefix: string) {
   if (!command.getArgumentCompletions) {
     throw new Error('Command did not register argument completions')
@@ -594,6 +615,7 @@ function createEvaluation(overrides: Partial<DiscoveryEvaluation> = {}): Discove
     dryRun: false,
     modelCount: 1,
     failedCount: 0,
+    warningCount: 0,
     passing: [],
     diff: { added: [], removed: [] },
     healthCheckSummary: '',
