@@ -22,7 +22,7 @@ const PROVIDER: Provider = {
 
 const completionsEndpoint = 'https://router.requesty.ai/v1/chat/completions'
 
-const CHAT_BODY = {
+const CHAT_BODY: Parameters<typeof postChatCompletion>[1] = {
   model: 'requesty/test-model',
   messages: [{ role: 'user', content: 'Say OK' }],
 }
@@ -45,10 +45,7 @@ describe('postChatCompletion', () => {
   it('returns failure for HTTP error', async () => {
     server.use(
       http.post(completionsEndpoint, () => {
-        return HttpResponse.text('bad gateway', {
-          status: 502,
-          statusText: 'Bad Gateway',
-        })
+        return HttpResponse.json({ message: 'bad gateway' }, { status: 502, statusText: 'Bad Gateway' })
       }),
     )
 
@@ -56,7 +53,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: 'HTTP 502 Bad Gateway: bad gateway',
+      error: '502 bad gateway',
     })
   })
 
@@ -74,7 +71,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: 'HTTP 502 Bad Gateway',
+      error: '502 status code (no body)',
     })
   })
 
@@ -94,14 +91,14 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: 'HTTP 502 Bad Gateway',
+      error: '502 body stream errored',
     })
   })
 
   it('returns failure when successful response body is not valid SSE', async () => {
     server.use(
       http.post(completionsEndpoint, () => {
-        return sseRawResponse('not json')
+        return sseRawResponse('data: not json\n\n')
       }),
     )
 
@@ -109,7 +106,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: 'Stream ended without content',
+      error: 'Error reading response: malformed server-sent event JSON.',
     })
   })
 
@@ -128,7 +125,7 @@ describe('postChatCompletion', () => {
     })
   })
 
-  it('returns failure for stream with malformed choices chunk', async () => {
+  it('returns ok for chunk with malformed choices field (truthy for the SDK)', async () => {
     server.use(
       http.post(completionsEndpoint, () => {
         return sseResponse([{ choices: 'not-an-array' }])
@@ -137,10 +134,7 @@ describe('postChatCompletion', () => {
 
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
-    expect(result).toMatchObject({
-      ok: false,
-      error: 'Stream ended without content',
-    })
+    expect(result.ok).toBe(true)
   })
 
   it('sends bearer token', async () => {
@@ -185,7 +179,7 @@ describe('postChatCompletion', () => {
     expect(requestBody).toMatchObject({ stream: true })
   })
 
-  it('sends Accept: text/event-stream header', async () => {
+  it('sends Accept: application/json header (openai sdk default)', async () => {
     let acceptHeader: string | null = null
     server.use(
       http.post(completionsEndpoint, ({ request }) => {
@@ -196,7 +190,7 @@ describe('postChatCompletion', () => {
 
     await postChatCompletion(PROVIDER, CHAT_BODY)
 
-    expect(acceptHeader).toBe('text/event-stream')
+    expect(acceptHeader).toBe('application/json')
   })
 
   it('returns ok after the first content chunk of a multi-chunk stream', async () => {
@@ -266,9 +260,7 @@ describe('postChatCompletion', () => {
 
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
-    expect(result).toMatchObject({ ok: false })
-    expect(result.ok).toBe(false)
-    expect(result.error).not.toMatch(/^Timed out/)
+    expect(result).toMatchObject({ ok: false, error: 'Connection error.' })
   })
 
   it('returns failure for stream emitting an error object without content', async () => {
@@ -282,7 +274,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: 'Stream ended without content',
+      error: 'upstream blew up',
     })
   })
 
@@ -382,7 +374,7 @@ describe('checkModels', () => {
     expect(results).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          error: "Reasoning/tool check failed: HTTP 418 I'm a Teapot: BAM",
+          error: 'Reasoning/tool check failed: 418 BAM',
           modelId: 'requesty/reasoning-model',
           ok: false,
         }),

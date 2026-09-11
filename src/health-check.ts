@@ -1,6 +1,8 @@
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 import fs from 'node:fs'
 import path from 'node:path'
+import OpenAI from 'openai'
+import type { Stream } from 'openai/streaming'
 import { getEnv, type Env } from './env'
 import { formatModelsDiffSummary, type ModelsDiff } from './models-json'
 
@@ -15,8 +17,6 @@ const defaultHealthCheckOptions = {
   retries: HEALTH_CHECK_TIMEOUT_RETRIES,
   retryDelayMs: HEALTH_CHECK_RETRY_DELAY_MS,
 }
-
-const DATA_PREFIX = 'data:'
 
 export type Provider = {
   baseUrl: string
@@ -143,39 +143,22 @@ export function writeHealthCheckLog(
 
 export async function postChatCompletion(
   provider: Provider,
-  body: Record<string, unknown>,
+  body: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming, 'stream'>,
   options: HealthCheckOptions = {},
 ): Promise<ModelCheckResult> {
   const healthCheckOptions = resolveHealthCheckOptions(options)
   const start = Date.now()
+  const client = createClient(provider, healthCheckOptions)
 
   for (let attempt = 0; attempt <= healthCheckOptions.retries; attempt++) {
     try {
-      const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${provider.apiKey}`,
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream',
-        },
-        body: JSON.stringify({ ...body, stream: true }),
-        signal: AbortSignal.timeout(healthCheckOptions.timeoutMs),
+      const stream = await client.chat.completions.create({
+        ...body,
+        stream: true,
       })
-
-      const latencyMs = Date.now() - start
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        return {
-          ok: false,
-          latencyMs,
-          error: `HTTP ${response.status} ${response.statusText}${text ? `: ${text}` : ''}`,
-        }
-      }
-
-      return await verifyFirstStreamChunk(response.body!, start)
+      return await verifyFirstStreamChunk(stream, start)
     } catch (err) {
-      if (isTimeoutError(err) && attempt < healthCheckOptions.retries) {
+      if (err instanceof OpenAI.APIConnectionTimeoutError && attempt < healthCheckOptions.retries) {
         if (healthCheckOptions.retryDelayMs > 0) {
           await new Promise(resolve => setTimeout(resolve, healthCheckOptions.retryDelayMs))
         }
@@ -185,9 +168,10 @@ export async function postChatCompletion(
       return {
         ok: false,
         latencyMs: Date.now() - start,
-        error: isTimeoutError(err)
-          ? `Timed out after ${attempts} attempt(s); per-attempt timeout is ${healthCheckOptions.timeoutMs / 1000}s`
-          : String(err),
+        error:
+          err instanceof OpenAI.APIConnectionTimeoutError
+            ? `Timed out after ${attempts} attempt(s); per-attempt timeout is ${healthCheckOptions.timeoutMs / 1000}s`
+            : formatRequestError(err),
       }
     }
   }
@@ -195,41 +179,31 @@ export async function postChatCompletion(
   return { ok: false, latencyMs: Date.now() - start, error: 'Unknown error' }
 }
 
-async function verifyFirstStreamChunk(body: ReadableStream<Uint8Array>, start: number): Promise<ModelCheckResult> {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let tail = ''
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) {
-        break
-      }
-      tail += decoder.decode(value, { stream: true })
-      const lines = tail.split('\n')
-      tail = lines.pop()!
-      for (const line of lines) {
-        if (!line.startsWith(DATA_PREFIX)) {
-          continue
-        }
-        const payload = line.slice(DATA_PREFIX.length).trim()
-        if (payload === '[DONE]') {
-          continue
-        }
-        try {
-          const parsed = JSON.parse(payload) as { choices?: unknown }
-          if (Array.isArray(parsed.choices) && parsed.choices.length > 0) {
-            return { ok: true, latencyMs: Date.now() - start }
-          }
-        } catch {
-          // partial JSON or non-choices chunk — keep reading
-        }
-      }
+function formatRequestError(err: unknown) {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function createClient(provider: Provider, options: ResolvedHealthCheckOptions): OpenAI {
+  return new OpenAI({
+    apiKey: provider.apiKey,
+    baseURL: provider.baseUrl,
+    timeout: options.timeoutMs,
+    maxRetries: 0,
+  })
+}
+
+async function verifyFirstStreamChunk(
+  stream: Stream<OpenAI.Chat.Completions.ChatCompletionChunk>,
+  start: number,
+): Promise<ModelCheckResult> {
+  for await (const chunk of stream) {
+    if (chunk.choices?.length) {
+      // abort before breaking so the request is terminated immediately
+      stream.controller.abort()
+      return { ok: true, latencyMs: Date.now() - start }
     }
-    return { ok: false, latencyMs: Date.now() - start, error: 'Stream ended without content' }
-  } finally {
-    await reader.cancel()
   }
+  return { ok: false, latencyMs: Date.now() - start, error: 'Stream ended without content' }
 }
 
 async function checkModel(
@@ -295,8 +269,4 @@ function resolveHealthCheckOptions(options: HealthCheckOptions): ResolvedHealthC
     ...defaultHealthCheckOptions,
     ...options,
   }
-}
-
-function isTimeoutError(error: unknown): boolean {
-  return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')
 }
