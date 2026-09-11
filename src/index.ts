@@ -11,13 +11,9 @@ import {
   finalizeDiscovery,
   formatDiscoveryFailure,
   getArgumentCompletions,
-  runCatching,
-  runCatchingAsync,
-  type Try,
 } from './discovery'
 import { type DiscoverySettings, readDiscoverySettings } from './settings'
-
-export { type Try }
+import { runCatching, runCatchingAsync, type Try } from './utils'
 
 const COMMAND_NAME = 'requesty-discover'
 export const USAGE_STATUS_KEY = 'requesty-usage'

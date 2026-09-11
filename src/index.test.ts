@@ -69,6 +69,7 @@ describe('extension registration', () => {
   })
 
   it('registers nothing when settings loading fails', async () => {
+    vi.mocked(EnvModule.getEnv).mockReturnValue(createTestEnv())
     vi.mocked(SettingsModule.readDiscoverySettings).mockThrow(new Error('settings exploded'))
 
     const act = () => loadExtension()

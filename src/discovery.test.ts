@@ -2,8 +2,8 @@ import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 import { describe, expect, it, vi } from 'vitest'
 import type { HealthCheckResult, Provider } from './health-check'
 import * as HealthCheckModule from './health-check'
-import * as ModelsJsonModule from './models-json'
 import type { GetApiKey, ModelsDiff, ModelsJson } from './models-json'
+import * as ModelsJsonModule from './models-json'
 import * as RequestyApiModule from './requesty-api'
 import { shuffleCompareFn } from '../test/helpers/shuffle'
 import { type Env } from './env'
@@ -12,10 +12,7 @@ import {
   type DiscoveryUi,
   evaluateDiscovery,
   finalizeDiscovery,
-  formatDiscoveryFailure,
   getArgumentCompletions,
-  runCatching,
-  runCatchingAsync,
 } from './discovery'
 import { DEFAULT_PROVIDER_ID, type DiscoverySettings } from './settings'
 
@@ -69,42 +66,6 @@ describe('getArgumentCompletions', () => {
 
   it('returns empty list for unrelated prefix', () => {
     expect(getArgumentCompletions('--wat')).toEqual([])
-  })
-})
-
-describe('runCatching', () => {
-  it('wraps a successful call', () => {
-    expect(runCatching(() => 42)).toEqual({ ok: true, value: 42 })
-  })
-
-  it('wraps a throwing call', () => {
-    const error = new Error('boom')
-    expect(
-      runCatching(() => {
-        throw error
-      }),
-    ).toEqual({ ok: false, error })
-  })
-})
-
-describe('runCatchingAsync', () => {
-  it('wraps a resolved promise', async () => {
-    await expect(runCatchingAsync(() => Promise.resolve(42))).resolves.toEqual({ ok: true, value: 42 })
-  })
-
-  it('wraps a rejected promise', async () => {
-    const error = new Error('boom')
-    await expect(runCatchingAsync(() => Promise.reject(error))).resolves.toEqual({ ok: false, error })
-  })
-})
-
-describe('formatDiscoveryFailure', () => {
-  it('formats Error instances', () => {
-    expect(formatDiscoveryFailure(new Error('models.json exploded'))).toBe('Discovery failed: models.json exploded')
-  })
-
-  it('formats non-Error throws', () => {
-    expect(formatDiscoveryFailure('this is not an error')).toBe('Discovery failed: this is not an error')
   })
 })
 

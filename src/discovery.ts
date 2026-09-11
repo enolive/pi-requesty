@@ -12,6 +12,7 @@ import {
 import { checkModels, formatHealthSummary, writeHealthCheckLog } from './health-check'
 import { discoverModels } from './requesty-api'
 import type { DiscoverySettings } from './settings'
+import { formatErrorMessage, runCatchingAsync } from './utils'
 
 const DRY_RUN_ARG = '--dry-run'
 
@@ -43,10 +44,8 @@ export type DiscoveryEvaluation = {
   data: ModelsJson
 }
 
-export type Try<T> = { ok: true; value: T } | { ok: false; error: unknown }
-
 export function formatDiscoveryFailure(error: unknown): string {
-  const detail = formatError(error)
+  const detail = formatErrorMessage(error)
   return `Discovery failed: ${detail}`
 }
 
@@ -161,7 +160,7 @@ Left models.json unchanged.`,
       ui.notify('Updated models.json. New models are available in /model.', 'info')
     } else {
       ui.notify(
-        `Updated models.json, but the model registry could not be refreshed: ${formatError(refreshResult.error)}. Run /reload or restart Pi to use the changes.`,
+        `Updated models.json, but the model registry could not be refreshed: ${formatErrorMessage(refreshResult.error)}. Run /reload or restart Pi to use the changes.`,
         'warning',
       )
     }
@@ -212,24 +211,4 @@ export function getArgumentCompletions(prefix: string): AutocompleteItem[] {
   ]
   if (!prefix) return options
   return options.filter(o => o.value.toLowerCase().startsWith(prefix.toLowerCase()))
-}
-
-export function formatError(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
-}
-
-export function runCatching<T>(fn: () => T): Try<T> {
-  try {
-    return { ok: true, value: fn() }
-  } catch (error) {
-    return { ok: false, error }
-  }
-}
-
-export async function runCatchingAsync<T>(fn: () => Promise<T>): Promise<Try<T>> {
-  try {
-    return { ok: true, value: await fn() }
-  } catch (error) {
-    return { ok: false, error }
-  }
 }

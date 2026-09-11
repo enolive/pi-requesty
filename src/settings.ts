@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { parse as JSON5Parse } from 'json5'
 import { prettifyError, z } from 'zod'
 import { type Env } from './env'
+import { formatErrorMessage } from './utils'
 
 export const DEFAULT_PROVIDER_ID = 'requesty-export'
 
@@ -35,10 +36,7 @@ export function readDiscoverySettings(envConfig: Env): DiscoverySettings {
   try {
     data = JSON5Parse(raw)
   } catch (error) {
-    throw new Error(
-      `Failed to parse ${envConfig.settings_path}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    )
+    throw new Error(`Failed to parse ${envConfig.settings_path}: ${formatErrorMessage(error)}`, { cause: error })
   }
 
   const result = DiscoverySettingsSchema.safeParse(data)

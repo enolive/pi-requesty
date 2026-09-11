@@ -36,6 +36,8 @@ Do **not** add a build/transpile step unless explicitly requested.
   - models-json.ts — read/validate/update models.json
   - requesty-api.ts — Requesty models library API
   - health-check.ts — model health checks and health-check log writing
+  - settings.ts — read various settings
+  - utils.ts — utility functions
   - *.test.ts — unit tests colocated with source files
   - ui/ – contains ui components
 - test/
