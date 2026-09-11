@@ -167,27 +167,6 @@ describe('runDiscoveryWorkflow mode dispatch', () => {
     expect(capturedModelRefreshes).toEqual([{ allowNetwork: false }])
   })
 
-  it('updates the usage status after the discovery', async () => {
-    const env = createTestEnv()
-    const settings = createTestSettings()
-    const evaluation = createEvaluation()
-    vi.mocked(DiscoveryModule.evaluateDiscovery).mockResolvedValue(evaluation)
-    vi.mocked(DiscoveryModule.finalizeDiscovery).mockResolvedValue(undefined)
-    const { runDiscoveryWorkflow } = await loadExtension()
-    const { ctx, capturedStatusLines } = createFakeCommandContext({
-      confirmResult: true,
-      knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' },
-    })
-    const apiKeyInfo: ApiKeyInfo = { name: 'Playground', monthlySpend: 63.55, monthlyLimit: 150 }
-    const { fetchApiUsage } = mockUsageDependencies([Promise.resolve(apiKeyInfo)])
-
-    await runDiscoveryWorkflow(ctx, settings, env, '')
-
-    expect(fetchApiUsage).toHaveBeenCalled()
-
-    expect(capturedStatusLines).toEqual(expect.arrayContaining([expect.objectContaining({ key: USAGE_STATUS_KEY })]))
-  })
-
   it('wires console ui and auto-confirm into discovery outside tui mode: no ctx.ui interaction, no registry refresh', async () => {
     const env = createTestEnv()
     const settings = createTestSettings()
@@ -233,6 +212,48 @@ describe('runDiscoveryWorkflow mode dispatch', () => {
     expect(capturedNotifications).toEqual([])
     expect(capturedStatuses).toEqual([])
     expect(capturedModelRefreshes).toEqual([])
+  })
+
+  it('updates the usage status after the discovery in ui mode', async () => {
+    const env = createTestEnv()
+    const settings = createTestSettings()
+    const evaluation = createEvaluation()
+    vi.mocked(DiscoveryModule.evaluateDiscovery).mockResolvedValue(evaluation)
+    vi.mocked(DiscoveryModule.finalizeDiscovery).mockResolvedValue(undefined)
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx, capturedStatusLines } = createFakeCommandContext({
+      confirmResult: true,
+      knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' },
+    })
+    const apiKeyInfo: ApiKeyInfo = { name: 'Playground', monthlySpend: 63.55, monthlyLimit: 150 }
+    const { fetchApiUsage } = mockUsageDependencies([Promise.resolve(apiKeyInfo)])
+
+    await runDiscoveryWorkflow(ctx, settings, env, '')
+
+    expect(fetchApiUsage).toHaveBeenCalled()
+
+    expect(capturedStatusLines).toEqual(expect.arrayContaining([expect.objectContaining({ key: USAGE_STATUS_KEY })]))
+  })
+
+  it('skips usage status updates in non-ui mode', async () => {
+    const env = createTestEnv()
+    const settings = createTestSettings()
+    const evaluation = createEvaluation()
+    vi.mocked(DiscoveryModule.evaluateDiscovery).mockResolvedValue(evaluation)
+    vi.mocked(DiscoveryModule.finalizeDiscovery).mockResolvedValue(undefined)
+    const { runDiscoveryWorkflow } = await loadExtension()
+    const { ctx, capturedStatusLines } = createFakeCommandContext({
+      mode: 'print',
+      confirmResult: true,
+      knownApiKeys: { [REQUESTY_PROVIDER_ID]: 'my-api-key' },
+    })
+    const apiKeyInfo: ApiKeyInfo = { name: 'Playground', monthlySpend: 63.55, monthlyLimit: 150 }
+    const { fetchApiUsage } = mockUsageDependencies([Promise.resolve(apiKeyInfo)])
+
+    await runDiscoveryWorkflow(ctx, settings, env, '')
+
+    expect(fetchApiUsage).not.toHaveBeenCalled()
+    expect(capturedStatusLines).toEqual([])
   })
 
   it('notifies "Discovery failed" and does not finalize when evaluation rejects (interactive)', async () => {

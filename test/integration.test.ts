@@ -9,6 +9,7 @@ import type { Env } from '../src/env.ts'
 
 const COMMAND_NAME = 'requesty-discover'
 const BASE_URL = 'https://router.requesty.ai/v1'
+const REQUESTY_MANAGE_URL = 'https://api-v2.requesty.ai/v1/manage'
 
 let tempDirectory: TempDirectory
 
@@ -70,13 +71,17 @@ describe('requesty-models-discover integration', () => {
         usedAuthKeys.push(request.headers.get('authorization') ?? '')
         return sseOk()
       }),
+      http.get(`${REQUESTY_MANAGE_URL}/apikey/self`, ({ request }) => {
+        usedAuthKeys.push(request.headers.get('authorization') ?? '')
+        return HttpResponse.json({ name: 'Playground', monthly_spend: '63.545944565', monthly_limit: '150' })
+      }),
     )
     const extension = await import('../src/index')
     const { pi, commands } = createFakePi()
     extension.default(pi)
     const command = commands.get(COMMAND_NAME)
     expect(command).toBeDefined()
-    const { ctx, capturedNotifications, capturedModelRefreshes } = createFakeCommandContext({
+    const { ctx, capturedNotifications, capturedModelRefreshes, capturedStatusLines } = createFakeCommandContext({
       knownApiKeys: { [DEFAULT_PROVIDER_ID]: 'integration-test-api-key' },
     })
 
@@ -86,7 +91,8 @@ describe('requesty-models-discover integration', () => {
     // 1: read models
     // 2: health check basic model
     // 3+4: health check model with reasoning
-    expect(usedAuthKeys).toHaveLength(4)
+    // 5: usage status via management api
+    expect(usedAuthKeys).toHaveLength(5)
     const uniqueAuthKeys = [...new Set(usedAuthKeys)]
     expect(uniqueAuthKeys).toEqual(['Bearer integration-test-api-key'])
     const modelsJson = await readJson(tempDirectory.modelsJsonPath)
@@ -102,6 +108,7 @@ describe('requesty-models-discover integration', () => {
       message: `${COMMAND_NAME}: Updated models.json. New models are available in /model.`,
     })
     expect(capturedModelRefreshes).toEqual([{ allowNetwork: false }])
+    expect(capturedStatusLines).toMatchSnapshot()
   })
 })
 

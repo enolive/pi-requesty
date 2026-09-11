@@ -1,7 +1,7 @@
 import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 import fs from 'node:fs'
 import path from 'node:path'
-import { getEnv, type Env } from './env'
+import { type Env, getEnv } from './env'
 import { formatModelsDiffSummary, type ModelsDiff } from './models-json'
 
 const HEALTH_CHECK_CONCURRENCY = 10
@@ -221,7 +221,7 @@ export async function postChatCompletion(
     }
   }
 
-  return { status: 'error' as const, latencyMs: Date.now() - start, error: 'Unknown error' }
+  return { status: 'error', latencyMs: Date.now() - start, error: 'Unknown error' }
 }
 
 async function verifyFirstStreamChunk(body: ReadableStream<Uint8Array>, start: number): Promise<ModelCheckResult> {
@@ -248,14 +248,14 @@ async function verifyFirstStreamChunk(body: ReadableStream<Uint8Array>, start: n
         try {
           const parsed = JSON.parse(payload) as { choices?: unknown }
           if (Array.isArray(parsed.choices) && parsed.choices.length > 0) {
-            return { status: 'ok' as const, latencyMs: Date.now() - start }
+            return { status: 'ok', latencyMs: Date.now() - start }
           }
         } catch {
           // partial JSON or non-choices chunk — keep reading
         }
       }
     }
-    return { status: 'error' as const, latencyMs: Date.now() - start, error: 'Stream ended without content' }
+    return { status: 'error', latencyMs: Date.now() - start, error: 'Stream ended without content' }
   } finally {
     await reader.cancel()
   }
@@ -314,7 +314,7 @@ async function checkModel(
   }
 
   return {
-    status: 'ok' as const,
+    status: 'ok',
     latencyMs: basicResult.latencyMs + reasoningResult.latencyMs,
   }
 }

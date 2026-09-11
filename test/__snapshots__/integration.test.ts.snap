@@ -47,3 +47,12 @@ exports[`requesty-models-discover integration > syncs a passing Requesty model i
   },
 }
 `;
+
+exports[`requesty-models-discover integration > syncs a passing Requesty model into a temp models.json 2`] = `
+[
+  {
+    "key": "requesty-usage",
+    "text": "Playground: $63.55/$150.00 (42%)",
+  },
+]
+`;
