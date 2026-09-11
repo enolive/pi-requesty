@@ -81,7 +81,7 @@ describe('postChatCompletion', () => {
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'HTTP 404: {"message":"Model not found","type":"invalid_request_error","code":"model_not_found"}',
     })
   })
@@ -99,7 +99,7 @@ describe('postChatCompletion', () => {
     const result = await postChatCompletion(PROVIDER, CHAT_BODY)
 
     expect(result).toMatchObject({
-      ok: false,
+      status: 'error',
       error: 'HTTP 502: {"message":"upstream blew up","provider":"azure/gpt-4o"}',
     })
   })
@@ -136,7 +136,7 @@ describe('postChatCompletion', () => {
 
     expect(result).toMatchObject({
       status: 'warning',
-      error: 'HTTP 429 Too Many Requests: Rate limit exceeded. Please slow down and retry.',
+      error: 'HTTP 429: 429 Rate limit exceeded. Please slow down and retry.',
     })
   })
 
@@ -190,7 +190,7 @@ describe('postChatCompletion', () => {
     })
   })
 
-  it('returns ok for chunk with malformed choices field (truthy for the SDK)', async () => {
+  it('returns failure on malformed choices field', async () => {
     server.use(
       http.post(completionsEndpoint, () => {
         return sseResponse([{ choices: 'not-an-array' }])

@@ -5,6 +5,7 @@ import OpenAI from 'openai'
 import type { Stream } from 'openai/streaming'
 import { type Env, getEnv } from './env'
 import { formatModelsDiffSummary, type ModelsDiff } from './models-json'
+import { formatErrorMessage } from './utils'
 
 const HEALTH_CHECK_CONCURRENCY = 10
 const HEALTH_CHECK_TIMEOUT_MS = 15_000
@@ -185,26 +186,33 @@ export async function postChatCompletion(
       })
       return await verifyFirstStreamChunk(stream, start)
     } catch (err) {
-      if (err instanceof OpenAI.APIConnectionTimeoutError && attempt < healthCheckOptions.retries) {
+      if (isTimeout(err) && attempt < healthCheckOptions.retries) {
         if (healthCheckOptions.retryDelayMs > 0) {
           await new Promise(resolve => setTimeout(resolve, healthCheckOptions.retryDelayMs))
         }
         continue
       }
       const attempts = attempt + 1
-      const status: HealthCheckStatus = response.status === 429 ? 'warning' : 'error'
+      const status: HealthCheckStatus = isTransient(err) ? 'warning' : 'error'
       return {
         status,
         latencyMs: Date.now() - start,
-        error:
-          err instanceof OpenAI.APIConnectionTimeoutError
-            ? `Timed out after ${attempts} attempt(s); per-attempt timeout is ${healthCheckOptions.timeoutMs / 1000}s`
-            : formatRequestError(err),
+        error: isTimeout(err)
+          ? `Timed out after ${attempts} attempt(s); per-attempt timeout is ${healthCheckOptions.timeoutMs / 1000}s`
+          : formatRequestError(err),
       }
     }
   }
 
   return { status: 'error', latencyMs: Date.now() - start, error: 'Unknown error' }
+}
+
+function isTimeout(err: unknown) {
+  return err instanceof OpenAI.APIConnectionTimeoutError
+}
+
+function isTransient(err: unknown) {
+  return err instanceof OpenAI.RateLimitError
 }
 
 function formatRequestError(err: unknown) {
@@ -214,7 +222,7 @@ function formatRequestError(err: unknown) {
     const body = err.error ? `: ${JSON.stringify(err.error)}` : `: ${err.message}`
     return `HTTP ${err.status}${body}`
   }
-  return err instanceof Error ? err.message : String(err)
+  return formatErrorMessage(err)
 }
 
 function createClient(provider: Provider, options: ResolvedHealthCheckOptions): OpenAI {
@@ -231,9 +239,7 @@ async function verifyFirstStreamChunk(
   start: number,
 ): Promise<ModelCheckResult> {
   for await (const chunk of stream) {
-    if (chunk.choices?.length) {
-      // abort before breaking so the request is terminated immediately
-      stream.controller.abort()
+    if (chunk.choices instanceof Array && chunk.choices.length > 0) {
       return { status: 'ok', latencyMs: Date.now() - start }
     }
   }
